@@ -3,7 +3,7 @@ import type { Logger } from 'tslog'
 import { type WireguardDirectory, WireguardDirectorySchema } from '@hackfed/schemas/v1'
 import { Eta } from 'eta'
 
-import type { Config } from '@/lib/config/config.schema'
+import { type Config, ConfigSchema } from '@/lib/config/config.schema'
 
 import type { ConfigWireguard } from './config.schema'
 
@@ -47,8 +47,9 @@ export class WireGuard {
       await this.assertWgQuick()
     }
 
+    await this.init()
+
     this.directory.on('changed', ({ data }) => this.onUpdate(data))
-    await this.directory.update()
     this.directory.startPolling()
   }
 
@@ -79,17 +80,17 @@ export class WireGuard {
     try {
       // Unfortunately, not all distributions contain the wg-quick capable of reporting its version,
       // so we limit this check to verifying its presence in the PATH only
-      const wgQuick = await Bun.$`which wg-quick`
+      const wgQuick = await Bun.$`which wg-quick`.quiet()
       if (wgQuick.exitCode !== 0) {
         throw new Error(`wg-quick not found in PATH: ${wgQuick.stderr}`)
       }
 
-      const wg = await Bun.$`wg --version`
+      const wg = await Bun.$`wg --version`.quiet()
       this.logger.debug('using wg version', wg.stdout.toString().trim())
 
       // Bash is required due to its capability of creating a virtual pipe file.
       // @todo elaborate on this, check whether there is a better way to do this
-      const bash = await Bun.$`bash -c 'echo $BASH_VERSION'`
+      const bash = await Bun.$`bash -c 'echo $BASH_VERSION'`.quiet()
       if (bash.exitCode !== 0) {
         throw new Error(`bash not found in PATH: ${bash.stderr}`)
       }
@@ -109,6 +110,32 @@ export class WireGuard {
   }
 
   /**
+   * Initial interface set-up
+   */
+  private async init (): Promise<void> {
+    const directory = await this.directory.get()
+    const config = await this.renderWgQuick(directory)
+    await this.writeConfig(config)
+    await this.initWgQuick()
+  }
+
+  /**
+   * Initialises the WG interface via wg-quick
+   */
+  private async initWgQuick (): Promise<void> {
+    // Clean-up the existing configuration
+    await Bun.$`wg-quick down ${this.wgConfig.interface_name}`.quiet()
+
+    // ... aaaand bring it back up again, so that the configuration is applied
+    const exec = await Bun.$`wg-quick up ${this.wgConfig.interface_name}`.quiet()
+    if (exec.exitCode === 0) {
+      this.logger.info('WireGuard interface brought up successfully')
+    } else {
+      this.logger.error('failed to bring up WireGuard interface', { exitCode: exec.exitCode, stderr: exec.stderr })
+    }
+  }
+
+  /**
    * Event handler triggered when the WireGuard directory is updated.
    * @param contents Updated directory contents
    */
@@ -124,7 +151,7 @@ export class WireGuard {
    * Reloads the WireGuard configuration using the `wg-quick strip` and `wg syncconf` command.
    */
   private async reloadWgQuickCmd (): Promise<void> {
-    const exec = await Bun.$`bash -c 'wg syncconf ${this.wgConfig.interface_name} <(wg-quick strip ${this.wgConfig.interface_name})'`
+    const exec = await Bun.$`bash -c 'exec wg syncconf ${this.wgConfig.interface_name} <(exec wg-quick strip ${this.wgConfig.interface_name})'`.quiet()
     if (exec.exitCode === 0) {
       this.logger.info('WireGuard configuration reloaded successfully')
     } else {
