@@ -10,11 +10,11 @@ export const WgQuickOutputConfigSchema = z
         description: 'Path to which hackfedd will render the WireGuard configuration file.',
         title: 'wg-quick Configuration Path',
       }),
-    reload: z.enum(['cmd'])
+    strategy: z.enum(['cmd', 'systemctl'])
       .default('cmd')
       .meta({
-        description: 'Reload strategy for WireGuard configuration after rendering the template.',
-        title: 'wg-quick Reload Strategy',
+        description: 'Life-cycle management strategy for WireGuard configuration after rendering the template.',
+        title: 'wg-quick Lifecycle Strategy',
       }),
   }).meta({
     description: 'Configuration options for wg-quick WireGuard output integration.',

@@ -64,7 +64,7 @@ export class WireGuard {
     // Trigger reload/conf-sync no matter if the file was written or not,
     // as it might help on the configuration mismatch on start-up, and costs basically nothing
     // if the configuration is already up-to-date.
-    await this.reloadWgQuickCmd()
+    await this.reloadWgQuick()
   }
 
   /**
@@ -76,28 +76,37 @@ export class WireGuard {
       return
     }
 
-    // Check if wg & wg-quick are available
-    try {
+    // Check whether all the required CLI tools are available
+    if (this.wgConfig.output.wgquick.strategy === 'cmd') {
+      // Check if wg & wg-quick are available
+      try {
       // Unfortunately, not all distributions contain the wg-quick capable of reporting its version,
       // so we limit this check to verifying its presence in the PATH only
-      const wgQuick = await Bun.$`which wg-quick`.quiet()
-      if (wgQuick.exitCode !== 0) {
-        throw new Error(`wg-quick not found in PATH: ${wgQuick.stderr}`)
+        const wgQuick = await Bun.$`which wg-quick`.quiet()
+        if (wgQuick.exitCode !== 0) {
+          throw new Error(`wg-quick not found in PATH: ${wgQuick.stderr}`)
+        }
+
+        const wg = await Bun.$`wg --version`.quiet()
+        this.logger.debug('using wg version', wg.stdout.toString().trim())
+
+        // Bash is required due to its capability of creating a virtual pipe file.
+        // @todo elaborate on this, check whether there is a better way to do this
+        const bash = await Bun.$`bash -c 'echo $BASH_VERSION'`.quiet()
+        if (bash.exitCode !== 0) {
+          throw new Error(`bash not found in PATH: ${bash.stderr}`)
+        }
+
+        this.logger.debug('using bash version', bash.stdout.toString().trim())
+      } catch (error: unknown) {
+        throw new Error(`Error during wg-quick pre-flight check: ${error}`)
       }
-
-      const wg = await Bun.$`wg --version`.quiet()
-      this.logger.debug('using wg version', wg.stdout.toString().trim())
-
-      // Bash is required due to its capability of creating a virtual pipe file.
-      // @todo elaborate on this, check whether there is a better way to do this
-      const bash = await Bun.$`bash -c 'echo $BASH_VERSION'`.quiet()
-      if (bash.exitCode !== 0) {
-        throw new Error(`bash not found in PATH: ${bash.stderr}`)
+    } else if (this.wgConfig.output.wgquick.strategy === 'systemctl') {
+      // Check if wg-quick@.service is available
+      const systemctl = await Bun.$`systemctl status wg-quick@${this.wgConfig.interface_name}.service`.quiet().nothrow()
+      if (systemctl.exitCode !== 0) {
+        throw new Error(`wg-quick@${this.wgConfig.interface_name}.service not found: ${systemctl.stderr}`)
       }
-
-      this.logger.debug('using bash version', bash.stdout.toString().trim())
-    } catch (error: unknown) {
-      throw new Error(`Error during wg-quick pre-flight check: ${error}`)
     }
 
     // Check if the output file is writable
@@ -123,20 +132,29 @@ export class WireGuard {
    * Initialises the WG interface via wg-quick
    */
   private async initWgQuick (): Promise<void> {
-    // Clean-up the existing configuration
-    const downExec = await Bun.$`wg-quick down ${this.wgConfig.interface_name}`.quiet().nothrow()
-    if (downExec.exitCode === 0) {
-      this.logger.info('WireGuard interface brought down successfully')
-    } else {
-      this.logger.warn('failed to bring down WireGuard interface, it might not have been up', { exitCode: downExec.exitCode, stderr: downExec.stderr })
-    }
+    if (this.wgConfig.output.wgquick.strategy === 'cmd') {
+      // Clean-up the existing configuration
+      const downExec = await Bun.$`wg-quick down ${this.wgConfig.interface_name}`.quiet().nothrow()
+      if (downExec.exitCode === 0) {
+        this.logger.info('WireGuard interface brought down successfully')
+      } else {
+        this.logger.warn('failed to bring down WireGuard interface, it might not have been up', { exitCode: downExec.exitCode, stderr: downExec.stderr.toString() })
+      }
 
-    // ... aaaand bring it back up again, so that the configuration is applied
-    const exec = await Bun.$`wg-quick up ${this.wgConfig.interface_name}`.quiet()
-    if (exec.exitCode === 0) {
-      this.logger.info('WireGuard interface brought up successfully')
-    } else {
-      this.logger.error('failed to bring up WireGuard interface', { exitCode: exec.exitCode, stderr: exec.stderr })
+      // ... aaaand bring it back up again, so that the configuration is applied
+      const exec = await Bun.$`wg-quick up ${this.wgConfig.interface_name}`.quiet()
+      if (exec.exitCode === 0) {
+        this.logger.info('WireGuard interface brought up successfully')
+      } else {
+        this.logger.error('failed to bring up WireGuard interface', { exitCode: exec.exitCode, stderr: exec.stderr.toString() })
+      }
+    } else if (this.wgConfig.output.wgquick.strategy === 'systemctl') {
+      const exec = await Bun.$`systemctl restart wg-quick@${this.wgConfig.interface_name}.service`.quiet()
+      if (exec.exitCode === 0) {
+        this.logger.info('WireGuard interface restarted successfully via systemctl')
+      } else {
+        this.logger.error('failed to restart WireGuard interface via systemctl', { exitCode: exec.exitCode, stderr: exec.stderr.toString() })
+      }
     }
   }
 
@@ -155,12 +173,21 @@ export class WireGuard {
   /**
    * Reloads the WireGuard configuration using the `wg-quick strip` and `wg syncconf` command.
    */
-  private async reloadWgQuickCmd (): Promise<void> {
-    const exec = await Bun.$`bash -c 'exec wg syncconf ${this.wgConfig.interface_name} <(exec wg-quick strip ${this.wgConfig.interface_name})'`.quiet()
-    if (exec.exitCode === 0) {
-      this.logger.info('WireGuard configuration reloaded successfully')
-    } else {
-      this.logger.error('failed to reload WireGuard configuration', { exitCode: exec.exitCode, stderr: exec.stderr })
+  private async reloadWgQuick (): Promise<void> {
+    if (this.wgConfig.output.wgquick.strategy === 'cmd') {
+      const exec = await Bun.$`bash -c 'exec wg syncconf ${this.wgConfig.interface_name} <(exec wg-quick strip ${this.wgConfig.interface_name})'`.quiet()
+      if (exec.exitCode === 0) {
+        this.logger.info('WireGuard configuration reloaded successfully')
+      } else {
+        this.logger.error('failed to reload WireGuard configuration', { exitCode: exec.exitCode, stderr: exec.stderr.toString() })
+      }
+    } else if (this.wgConfig.output.wgquick.strategy === 'systemctl') {
+      const exec = await Bun.$`systemctl reload wg-quick@${this.wgConfig.interface_name}.service`.quiet()
+      if (exec.exitCode === 0) {
+        this.logger.info('WireGuard configuration reloaded successfully via systemctl')
+      } else {
+        this.logger.error('failed to reload WireGuard configuration via systemctl', { exitCode: exec.exitCode, stderr: exec.stderr.toString() })
+      }
     }
   }
 
