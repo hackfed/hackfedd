@@ -46,6 +46,6 @@ AllowedIPs = <%= peer.address %>
 Endpoint = <%= peer.endpoint %>
 <% } %>
 
-KeepAlive = 30
+PersistentKeepalive = 25
 <% }) %>
 <% }) %>

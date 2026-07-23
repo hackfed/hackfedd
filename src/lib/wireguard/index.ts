@@ -85,7 +85,16 @@ export class WireGuard {
       }
 
       const wg = await Bun.$`wg --version`
-      this.logger.debug('using wg version', { version: wg.stdout.toString().trim() })
+      this.logger.debug('using wg version', wg.stdout.toString().trim())
+
+      // Bash is required due to its capability of creating a virtual pipe file.
+      // @todo elaborate on this, check whether there is a better way to do this
+      const bash = await Bun.$`bash -c 'echo $BASH_VERSION'`
+      if (bash.exitCode !== 0) {
+        throw new Error(`bash not found in PATH: ${bash.stderr}`)
+      }
+
+      this.logger.debug('using bash version', bash.stdout.toString().trim())
     } catch (error: unknown) {
       throw new Error(`Error during wg-quick pre-flight check: ${error}`)
     }
@@ -117,8 +126,7 @@ export class WireGuard {
    * Reloads the WireGuard configuration using the `wg-quick strip` and `wg syncconf` command.
    */
   private async reloadWgQuickCmd (): Promise<void> {
-    const strippedConfig = await Bun.$`wg-quick strip ${this.wgConfig.interface_name}`
-    const exec = await Bun.$`wg syncconf ${this.wgConfig.interface_name} < ${strippedConfig.stdout}`
+    const exec = await Bun.$`bash -c 'wg syncconf ${this.wgConfig.interface_name} <(wg-quick strip ${this.wgConfig.interface_name})'`
     if (exec.exitCode === 0) {
       this.logger.info('WireGuard configuration reloaded successfully')
     } else {
