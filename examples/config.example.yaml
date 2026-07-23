@@ -1,0 +1,108 @@
+# General configuration for HackFed deployment.
+# Required.
+general:
+  # Unique identifier for this organization.
+  # Required.
+  org_id: "acme"
+
+  # Root URL of the HackFed directory service.
+  # Optional, defaults to "https://directory.hackfed.org".
+  directory: "https://directory.hackfed.org"
+
+  # Directory refresh interval in seconds.
+  # Optional, defaults to 900 (15 minutes).
+  directory_refresh_interval: 900
+
+  # List of organization IDs to avoid peering with.
+  # Optional, defaults to empty list.
+  ignored_orgs:
+    - "bad-guys-inc"
+
+# WireGuard service configuration.
+# Optional. Disabled if not present.
+wireguard:
+  # Name of the WireGuard interface to be created.
+  # Optional. Default to "hackfed0".
+  interface_name: hackfed0
+  
+  # Port on which the WireGuard interface will listen for incoming connections.
+  # Optional. Disables listening if not present.
+  listen_port: 31337
+
+  # Private key for the WireGuard interface.
+  # Required.
+  private_key: PrivateKeyHere==
+
+  # Way to provide a custom Eta template for the WireGuard configuration file.
+  # Optional. If not present, a default template will be used.
+  template_path: /data/wireguard/hackfed0.conf.template
+
+  # IPv6 address of this node inside the tunnel.
+  # Required.
+  address: "fd79:7636:1f08:883d::1"
+
+  # Output configuration for WireGuard service.
+  # Required
+  output:
+
+    # Type of WireGuard service integration.
+    # Required.
+    type: wgquick
+
+    # wg-quick output configuration.
+    # Required if type is "wgquick".
+    wgquick:
+      # Path to which hackfedd will render the WireGuard configuration file.
+      # Optional. Defaults to "/etc/wireguard/hackfed0.conf".
+      path: /data/wireguard/hackfed0.conf
+
+      # Reload strategy for WireGuard configuration after rendering the template.
+      #  - "cmd": run a command (wg-quick strip + wg syncconf) to reload WireGuard configuration.
+      # Optional. Default to "cmd".
+      reload: cmd
+
+# Telephony service configuration.
+# Optional, disabled if not present.
+telephony:
+
+  # This exchange ID within the organization.
+  # Optional, defaults to "primary".
+  org_exchange_id: primary
+
+  # Output configuration for telephony service.
+  # Optional. If not present, telephony service is disabled.
+  output:
+    # Type of telephony service integration.
+    # Required.
+    type: asterisk
+
+    # Asterisk output configuration.
+    # Required if type is "asterisk".
+    asterisk:
+      # Directory to which hackfedd will render configuration templates.
+      # Optional. Defaults to "/data/asterisk-configs".
+      directory: /data/asterisk-configs
+
+      # Way to reload Asterisk configuration after rendering templates.
+      # Optional. If not present, no reload will be performed.
+      reload:
+        # Method to reload Asterisk configuration.
+        # Required.
+        type: ami+http
+
+        # AMI+HTTP reload configuration.
+        # Required if type is "ami+http".
+        ami:
+          # URL to AMI over built-in web server
+          # Optional, default to "http://asterisk:8088/manager"
+          uri: http://asterisk:8088/manager
+
+          # AMI username
+          # Optional, default to "admin"
+          username: admin
+
+          # AMI password
+          # Optional, default to "password"
+          secret: password
+
+    

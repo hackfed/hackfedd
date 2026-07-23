@@ -1,0 +1,50 @@
+{
+  "name": "@hackfed/hackfedd",
+  "description": "Hackfed daemon.",
+  "version": "0.0.0",
+  "bin": {
+    "hackfedd": "src/index.ts"
+  },
+  "dependencies": {
+    "@hackfed/schemas": "^0.10.0",
+    "change-case": "^5.4.4",
+    "commander": "^15.0.0",
+    "eta": "^4.6.0",
+    "jsdom": "^29.1.1",
+    "ky": "^2.0.2",
+    "mitt": "^3.0.1",
+    "set-cookie-parser": "^3.1.2",
+    "tslog": "^5.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@bksp/style-guide": "^1.8.1",
+    "@types/bun": "latest",
+    "@types/jsdom": "^28.0.3",
+    "@types/set-cookie-parser": "^2.4.10",
+    "eslint": "^9.39.4"
+  },
+  "engines": {
+    "bun": ">=1.3.6"
+  },
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "license": "MPL-2.0",
+  "module": "src/index.ts",
+  "peerDependencies": {
+    "typescript": "^6.0.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hackfed/hfd.git"
+  },
+  "scripts": {
+    "lint": "tsc --noEmit && eslint .",
+    "generate:config": "bun run tools/generate-config-schema.ts",
+    "start": "bun run src/index.ts"
+  },
+  "type": "module"
+}

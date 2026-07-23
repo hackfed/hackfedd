@@ -1,0 +1,7 @@
+<% it.exchanges.forEach(exchange => { %>
+[<%= exchange.id %>]
+type = friend
+qualify = yes
+host = <%= exchange.endpoint %>
+context = <%= exchange.context %>
+<% }) %>

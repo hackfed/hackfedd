@@ -1,0 +1,2 @@
+minimumReleaseAgeExclude:
+  - '@hackfed/schemas@0.10.0'

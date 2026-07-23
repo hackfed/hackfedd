@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "_version": "2.0.0",
+  "extends": "@bksp/style-guide/typescript",
+  "compilerOptions": {
+    "lib": ["es2022"],
+		"target": "es2022",
+		"moduleDetection": "force",
+		"module": "preserve",
+		"resolveJsonModule": true,
+		"allowJs": true,
+		"verbatimModuleSyntax": true,
+    "types": ["bun"],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "tools/**/*.ts"
+  ]
+}

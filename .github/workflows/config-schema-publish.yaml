@@ -1,0 +1,37 @@
+name: Publish JSON Schemas
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Publish
+    environment: Production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Set-up s5cmd
+        uses: peak/action-setup-s5cmd@bde462e7399c68b4a9b05549d90b0e7d5c95e60f
+        with:
+          version: v2.3.0
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Generate config schemas
+        run: bun run generate:config > dist/schemas/config.json
+      
+      - name: Upload schemas
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          s5cmd --endpoint-url ${{ vars.AWS_ENDPOINT_URL }} sync --delete 'dist/schemas/v*' 's3://hackfed-hfd/'

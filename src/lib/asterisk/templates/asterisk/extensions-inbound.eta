@@ -1,0 +1,5 @@
+<% it.contexts.forEach(ctx => { %>
+[<%= ctx.id %>]
+exten => _<%= it.ourPrefix %>!, 1, Set(CALLERID(all)="(<%= ctx.name %>) ${CALLERID(name)}" <<%= ctx.prefix %>${CALLERID(num):7}>)
+ same => n, Gosub(HackfedIncomingRouter, s, 1(${EXTEN}))
+<% }) %>
