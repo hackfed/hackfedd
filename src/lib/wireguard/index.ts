@@ -124,7 +124,12 @@ export class WireGuard {
    */
   private async initWgQuick (): Promise<void> {
     // Clean-up the existing configuration
-    await Bun.$`wg-quick down ${this.wgConfig.interface_name}`.quiet()
+    const downExec = await Bun.$`wg-quick down ${this.wgConfig.interface_name}`.quiet().nothrow()
+    if (downExec.exitCode === 0) {
+      this.logger.info('WireGuard interface brought down successfully')
+    } else {
+      this.logger.warn('failed to bring down WireGuard interface, it might not have been up', { exitCode: downExec.exitCode, stderr: downExec.stderr })
+    }
 
     // ... aaaand bring it back up again, so that the configuration is applied
     const exec = await Bun.$`wg-quick up ${this.wgConfig.interface_name}`.quiet()
