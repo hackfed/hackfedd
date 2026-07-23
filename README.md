@@ -1,11 +1,11 @@
-# Toolbox • Hackfed
+# Agent • Hackfed
 
-Tools for Hackfed Registry.
+Agent for Hackfed.
 
 Requires Bun to run.
 
 ## Example
 
 ```bash
-bunx @hackfed/toolbox
+bunx @hackfed/hackfedd
 ```
