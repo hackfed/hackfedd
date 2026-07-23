@@ -77,8 +77,12 @@ export class WireGuard {
 
     // Check if wg & wg-quick are available
     try {
-      const wgQuick = await Bun.$`wg-quick --version`
-      this.logger.debug('using wg-quick version', { version: wgQuick.stdout.toString().trim() })
+      // Unfortunately, not all distributions contain the wg-quick capable of reporting its version,
+      // so we limit this check to verifying its presence in the PATH only
+      const wgQuick = await Bun.$`which wg-quick`
+      if (wgQuick.exitCode !== 0) {
+        throw new Error(`wg-quick not found in PATH: ${wgQuick.stderr}`)
+      }
 
       const wg = await Bun.$`wg --version`
       this.logger.debug('using wg version', { version: wg.stdout.toString().trim() })
