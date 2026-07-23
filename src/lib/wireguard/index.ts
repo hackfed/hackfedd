@@ -101,12 +101,10 @@ export class WireGuard {
 
     // Check if the output file is writable
     const outputFile = Bun.file(this.wgConfig.output.wgquick.path)
-    if (await outputFile.exists()) {
-      try {
-        await Bun.write(outputFile, await outputFile.text())
-      } catch (error: unknown) {
-        throw new Error(`Error during wg-quick pre-flight check: cannot write to ${this.wgConfig.output.wgquick.path}: ${error}`)
-      }
+    try {
+      await Bun.write(outputFile, await outputFile.text())
+    } catch (error: unknown) {
+      throw new Error(`Error during wg-quick pre-flight check: cannot write to ${this.wgConfig.output.wgquick.path}: ${error}`)
     }
   }
 
