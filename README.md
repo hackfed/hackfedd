@@ -8,13 +8,13 @@ published directory.
 Requires Bun 1.3.6 or newer.
 
 ```bash
-bunx @hackfed/hackfedd agent --config /etc/hackfedd/config.yaml
+bunx hackfed/hackfedd agent --config /etc/hackfedd/config.yaml
 ```
 
 Validate a configuration without starting services:
 
 ```bash
-bunx @hackfed/hackfedd check-config --config /etc/hackfedd/config.yaml
+bunx hackfed/hackfedd check-config --config /etc/hackfedd/config.yaml
 ```
 
 See [`examples/config.example.yaml`](examples/config.example.yaml) for all
