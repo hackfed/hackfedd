@@ -25,6 +25,7 @@ export interface AsteriskDependencies {
 type AtomicWriter = (targetPath: string, contents: string) => Promise<boolean>
 
 const MODULE_ORDER: readonly AsteriskModule[] = ['chan_iax2.so', 'pbx_config.so']
+const ASTERISK_CONFIG_MODE = 0o644
 const ARTIFACT_MODULES: Record<keyof AsteriskArtifacts, AsteriskModule> = {
   'extensions-inbound.conf': 'pbx_config.so',
   'extensions-outbound.conf': 'pbx_config.so',
@@ -65,7 +66,8 @@ export class Asterisk {
     this.reloader = dependencies.reloader ?? (asteriskConfig.reload
       ? new AmiHttpClient(this.logger, asteriskConfig.reload.ami)
       : undefined)
-    this.writeFile = dependencies.writeFile ?? writeFileAtomic
+    this.writeFile = dependencies.writeFile ?? ((targetPath, contents) =>
+      writeFileAtomic(targetPath, contents, { mode: ASTERISK_CONFIG_MODE }))
   }
 
   public async start (): Promise<void> {

@@ -2,7 +2,7 @@ import type { TelephonyDirectory } from '@hackfed/schemas/v1'
 
 import { TelephonyDirectorySchema } from '@hackfed/schemas/v1'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -102,6 +102,11 @@ describe('Asterisk service', () => {
       'extensions-outbound.conf',
       'iax.conf',
     ])
+    const generatedModes = await Promise.all(generatedFiles.map(async file => {
+      const fileStats = await stat(path.join(outputDirectory, file))
+      return fileStats.mode & 0o777
+    }))
+    expect(generatedModes).toEqual([0o644, 0o644, 0o644])
 
     data = changedRemoteEndpoint(telephonyDirectory)
     version = 2

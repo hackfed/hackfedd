@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
+import { writeFileAtomic } from '@/lib/common/atomic-file'
 import { Directory } from '@/lib/common/directory'
 import { ConfigSchema } from '@/lib/config/config.schema'
 import { filterWireguardDirectory, WireGuard } from '@/lib/wireguard'
@@ -70,20 +71,43 @@ describe('WireGuard', () => {
     )
   })
 
-  test('checks an inactive systemd unit with cat and restarts it', async () => {
-    const fixture = await makeService('systemctl')
+  test('starts an inactive systemd unit when the configuration is unchanged', async () => {
+    const fixture = await makeService('systemctl', command => command[1] === 'is-active'
+      ? { exitCode: 3, stderr: '', stdout: 'inactive' }
+      : { exitCode: 0, stderr: '', stdout: 'ok' },
+    async (targetPath, contents) => {
+      await writeFileAtomic(targetPath, contents)
+      return false
+    })
     await fixture.service.start()
     fixture.service.stop()
 
     expect(fixture.commands).toEqual([
       ['systemctl', 'cat', 'wg-quick@hackfed0.service'],
-      ['systemctl', 'restart', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'is-active', '--quiet', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'start', 'wg-quick@hackfed0.service'],
     ])
     const rendered = await Bun.file(fixture.outputPath).text()
     expect(rendered).toContain('fd79:7636:1f08:883d::8/128')
     expect(rendered).not.toContain('fd79:7636:1f08:883d:0:0:0:101/128')
     expect(rendered).not.toContain('fd79:7636:1f08:883d::66/128')
     expect(rendered).not.toContain('\nPostUp = touch /tmp/hackfedd-injected')
+  })
+
+  test('does not restart an active systemd unit when the configuration is unchanged', async () => {
+    const fixture = await makeService('systemctl')
+    await fixture.service.start()
+    fixture.service.stop()
+    await fixture.service.start()
+    fixture.service.stop()
+
+    expect(fixture.commands).toEqual([
+      ['systemctl', 'cat', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'is-active', '--quiet', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'restart', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'cat', 'wg-quick@hackfed0.service'],
+      ['systemctl', 'is-active', '--quiet', 'wg-quick@hackfed0.service'],
+    ])
   })
 
   test('propagates systemctl restart failures', async () => {
@@ -121,7 +145,8 @@ async function makeService (
     exitCode: number
     stderr: string
     stdout: string
-  } = () => ({ exitCode: 0, stderr: '', stdout: 'ok' })
+  } = () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
+  writeFile?: (targetPath: string, contents: string) => Promise<boolean>
 ): Promise<{ commands: string[][], outputPath: string, service: WireGuard }> {
   const server = Bun.serve({
     fetch: () => Response.json(wireguardDirectory),
@@ -163,6 +188,7 @@ async function makeService (
       commands.push([...command])
       return Promise.resolve(resultForCommand(command))
     },
+    ...(writeFile && { writeFile }),
   })
 
   return { commands, outputPath, service }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -25,5 +25,20 @@ describe('atomic file output', () => {
     expect(await writeFileAtomic(target, 'second\n')).toBeTrue()
     expect(await Bun.file(target).text()).toBe('second\n')
     expect(await readdir(path.dirname(target))).toEqual(['config.conf'])
+  })
+
+  test('enforces an explicit mode even when contents are unchanged', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'hackfedd-atomic-'))
+    temporaryDirectories.push(directory)
+    const target = path.join(directory, 'config.conf')
+
+    await writeFileAtomic(target, 'contents\n')
+    const initialStats = await stat(target)
+    expect(initialStats.mode & 0o777).toBe(0o600)
+
+    await chmod(target, 0o600)
+    expect(await writeFileAtomic(target, 'contents\n', { mode: 0o644 })).toBeFalse()
+    const repairedStats = await stat(target)
+    expect(repairedStats.mode & 0o777).toBe(0o644)
   })
 })

@@ -81,8 +81,8 @@ export class WireGuard {
     await this.assertWgQuick()
     const directory = await this.directory.get()
     const rendered = await this.renderWgQuick(directory)
-    await this.writeConfig(rendered)
-    await this.initWgQuick()
+    const isConfigChanged = await this.writeConfig(rendered)
+    await this.initWgQuick(isConfigChanged)
     this.pendingReload = false
 
     this.directory.on('changed', this.onDirectoryChanged)
@@ -164,7 +164,7 @@ export class WireGuard {
     return result
   }
 
-  private async initWgQuick (): Promise<void> {
+  private async initWgQuick (isConfigChanged: boolean): Promise<void> {
     const wireguard = this.config.wireguard
     if (!wireguard) {
       throw new Error('WireGuard configuration is missing')
@@ -181,8 +181,17 @@ export class WireGuard {
       await this.execute(['wg-quick', 'up', wireguard.interface_name], 'bring up the WireGuard interface')
       this.logger.info('WireGuard interface brought up successfully')
     } else {
-      await this.restartSystemdUnit()
-      this.logger.info('WireGuard interface restarted successfully via systemctl')
+      const unit = `wg-quick@${wireguard.interface_name}.service`
+      const active = await this.runCommand(['systemctl', 'is-active', '--quiet', unit])
+      if (isConfigChanged) {
+        await this.restartSystemdUnit()
+        this.logger.info('WireGuard interface restarted successfully via systemctl')
+      } else if (active.exitCode === 0) {
+        this.logger.info('WireGuard interface is already active with the current configuration')
+      } else {
+        await this.execute(['systemctl', 'start', unit], 'start the WireGuard systemd unit')
+        this.logger.info('WireGuard interface started successfully via systemctl')
+      }
     }
   }
 
