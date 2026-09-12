@@ -56,8 +56,10 @@ wireguard:
       # Optional. Defaults to "/etc/wireguard/hackfed0.conf".
       path: /data/wireguard/hackfed0.conf
 
-      # Reload strategy for WireGuard configuration after rendering the template.
-      #  - "cmd": run a command (wg-quick strip + wg syncconf) to reload WireGuard configuration.
+      # Lifecycle strategy for applying the rendered WireGuard configuration.
+      #  - "cmd": use wg-quick down/up at startup and wg-quick strip + wg syncconf for updates.
+      #  - "systemctl": restart wg-quick@<interface_name>.service at startup and after updates;
+      #    wg-quick systemd units do not provide a reload operation.
       # Optional. Default to "cmd".
       strategy: cmd
 

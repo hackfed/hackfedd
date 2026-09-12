@@ -88,4 +88,18 @@ describe('configuration schema', () => {
     expect(output).not.toContain('PrivateKeyHere==')
     expect(output).not.toContain('replace-with-a-strong-generated-secret')
   })
+
+  test('keeps the FreePBX inbound example outside the trusted internal context', async () => {
+    const contents = await Bun.file(new URL('../examples/asterisk/freepbx/extensions_custom.conf', import.meta.url)).text()
+
+    expect(contents).not.toContain('Goto(from-internal,')
+    // eslint-disable-next-line no-template-curly-in-string -- literal Asterisk variable expression.
+    expect(contents).toContain('Goto(from-did-direct,${ARG1},1)')
+    // eslint-disable-next-line no-template-curly-in-string -- literal Asterisk variable expression.
+    expect(contents).toContain('"${ARG1}" = ""')
+    // eslint-disable-next-line no-template-curly-in-string -- literal Asterisk variable expression.
+    expect(contents).not.toContain('"${ARG1}" = "0"')
+    expect(contents).toContain('^[0-9]{1,6}$')
+    expect(contents).toContain('Hangup(28)')
+  })
 })

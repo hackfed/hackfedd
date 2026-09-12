@@ -8,7 +8,14 @@ hackfedd output directly to generated `iax.conf` or `extensions.conf` files.
 2. Merge the example `iax_custom.conf` and `extensions_custom.conf` snippets
    into the matching FreePBX custom files. In particular, retain any existing
    `[from-internal-custom]` content and add `include => hackfed-outbound`.
-3. Customize `HackfedIncomingRouter`; hackfedd never owns or replaces it.
+3. Customize `HackfedIncomingRouter`; hackfedd never owns or replaces it. Replace
+   the example `ivr-1` destination with the context generated for your attendant
+   IVR. Do not route federated inbound calls through `from-internal`, which grants
+   local-phone privileges such as feature codes and outbound routes. The example
+   sends only the exact organization prefix (an empty subscriber suffix) to the
+   attendant, permits one- through six-digit extensions through `from-did-direct`,
+   and rejects longer suffixes. Generated inbound calls also carry an inherited
+   marker that prevents them from being sent back through a Hackfed outbound peer.
 4. In **Settings → Asterisk Managers**, create the `hackfedd` AMI user with a
    strong secret and the `system` and `config` read/write permissions needed by
    the AMI `Reload` action. Do not hand-edit FreePBX's generated manager files.

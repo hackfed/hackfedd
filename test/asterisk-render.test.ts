@@ -46,6 +46,7 @@ describe('Asterisk rendering', () => {
     expect(artifacts['iax.conf']).toContain('allow = g722,ulaw')
     expect(artifacts['iax.conf']).not.toContain('skip')
     expect(artifacts['extensions-outbound.conf']).toContain('[hackfed-outbound]')
+    expect(artifacts['extensions-outbound.conf']).toContain('${HACKFED_INBOUND}" = "1"]?invalid')
     expect(artifacts['extensions-outbound.conf']).toContain(
       'exten => _7509101.,1,Dial(PJSIP/${EXTEN:7},30,rT)'
     )
@@ -59,6 +60,7 @@ describe('Asterisk rendering', () => {
     expect(artifacts['extensions-inbound.conf']).toContain('${HF_CALLER_DIGITS:0:11}')
     expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(num)=+12025550123${HF_CALLER_DIGITS:11})')
     expect(artifacts['extensions-inbound.conf']).toContain('Set(HF_CALLER_NAME=${CALLERID(name)})')
+    expect(artifacts['extensions-inbound.conf']).toContain('Set(__HACKFED_INBOUND=1)')
     expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(name)=B4CKSP4CE: ${HF_CALLER_NAME})')
     expect(artifacts['extensions-inbound.conf']).toContain('${LEN(${HF_CALLER_NAME})} = 0]?caller-name-ready')
     expect(artifacts['extensions-inbound.conf']).toContain('Hangup(28)')
