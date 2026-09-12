@@ -35,7 +35,7 @@ wireguard:
 
   # Way to provide a custom Eta template for the WireGuard configuration file.
   # Optional. If not present, a default template will be used.
-  template_path: /data/wireguard/hackfed0.conf.template
+  # template_path: /data/wireguard/hackfed0.conf.template
 
   # IPv6 address of this node inside the tunnel.
   # Required.
@@ -83,6 +83,7 @@ telephony:
     asterisk:
       # Directory to which hackfedd will render configuration templates.
       # Optional. Defaults to "/data/asterisk-configs".
+      # for freepbx, use /etc/asterisk/hackfed
       directory: /data/asterisk-configs
 
       # Way to reload Asterisk configuration after rendering templates.
