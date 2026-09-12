@@ -6,7 +6,6 @@ export const AsteriskConfigAmiHttpReloadSchema = z
       secret: z
         .string()
         .min(1)
-        .default('password')
         .meta({
           description: 'The secret/password for AMI authentication.',
           title: 'AMI Secret',
@@ -21,14 +20,14 @@ export const AsteriskConfigAmiHttpReloadSchema = z
       username: z
         .string()
         .min(1)
-        .default('admin')
+        .default('hackfedd')
         .meta({
           description: 'The username for AMI authentication.',
           title: 'AMI Username',
         }),
-    }),
+    }).strict(),
     type: z.literal('ami+http'),
-  }).meta({
+  }).strict().meta({
     description: 'Configuration for reloading Asterisk via AMI over HTTP.',
     title: 'Asterisk AMI HTTP Reload Configuration',
   })
@@ -55,7 +54,7 @@ export const AsteriskOutputConfigSchema = z
         title: 'Asterisk Configuration Directory',
       }),
     reload: AsteriskConfigReloadSchema.optional(),
-  }).meta({
+  }).strict().meta({
     description: 'Configuration options for Asterisk telephony integration.',
     title: 'Asterisk Configuration',
   })
@@ -65,7 +64,7 @@ export type AsteriskOutputConfig = z.infer<typeof AsteriskOutputConfigSchema>
 export const ConfigTelephonyOutputSchema = z.object({
   asterisk: AsteriskOutputConfigSchema,
   type: z.literal('asterisk'),
-})
+}).strict()
 
 export const ConfigTelephonySchema = z
   .object({
@@ -73,7 +72,6 @@ export const ConfigTelephonySchema = z
       .string()
       .min(1)
       .default('primary')
-      .optional()
       .meta({
         description: 'Exchange ID of this Hackfed instance within the organization.',
         name: 'Organization Exchange ID',
@@ -84,7 +82,7 @@ export const ConfigTelephonySchema = z
         description: 'Configuration for telephony output integration.',
         name: 'Telephony Output Configuration',
       }),
-  }).meta({
+  }).strict().meta({
     description: 'Telephony service configuration.',
     title: 'Telephony Configuration',
   })

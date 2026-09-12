@@ -22,9 +22,9 @@ general:
 # Optional. Disabled if not present.
 wireguard:
   # Name of the WireGuard interface to be created.
-  # Optional. Default to "hackfed0".
+  # Optional. Defaults to "hackfed0".
   interface_name: hackfed0
-  
+
   # Port on which the WireGuard interface will listen for incoming connections.
   # Optional. Disables listening if not present.
   listen_port: 31337
@@ -59,7 +59,7 @@ wireguard:
       # Reload strategy for WireGuard configuration after rendering the template.
       #  - "cmd": run a command (wg-quick strip + wg syncconf) to reload WireGuard configuration.
       # Optional. Default to "cmd".
-      reload: cmd
+      strategy: cmd
 
 # Telephony service configuration.
 # Optional, disabled if not present.
@@ -94,15 +94,13 @@ telephony:
         # Required if type is "ami+http".
         ami:
           # URL to AMI over built-in web server
-          # Optional, default to "http://asterisk:8088/manager"
+          # Optional, defaults to "http://asterisk:8088/manager".
+          # /rawman is also supported.
           uri: http://asterisk:8088/manager
 
-          # AMI username
-          # Optional, default to "admin"
-          username: admin
+          # AMI username.
+          # Optional, defaults to "hackfedd".
+          username: hackfedd
 
-          # AMI password
-          # Optional, default to "password"
-          secret: password
-
-    
+          # AMI secret. Required; use a strong, unique value.
+          secret: replace-with-a-strong-generated-secret

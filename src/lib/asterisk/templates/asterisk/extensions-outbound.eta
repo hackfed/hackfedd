@@ -1,6 +1,0 @@
-<% it.prefixes.forEach(prefix => { %>
-; (Hackfed) <%= prefix.name %>
-exten => _<%= prefix.prefix %>!, 1, Set(CALLERID(all)="${CALLERID(name)}" <<%= it.ourPrefix %>${CALLERID(num)}>)
- same => n, Dial(IAX2/<%= prefix.peer %>/${EXTEN}, 30, rT)
-
-<% }) %>

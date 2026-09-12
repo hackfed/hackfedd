@@ -2,18 +2,21 @@ import type { Logger } from 'tslog'
 import type z from 'zod'
 
 import ky, { type KyInstance } from 'ky'
-import mitt from 'mitt'
 
 export interface DirectoryConfig<T> {
+  apiClient?: KyInstance
+
   directory: {
     refreshIntervalSeconds: number
     root: string
   }
-
-  kind: string;
+  kind: string
   parentLogger: Logger<unknown>
   schema: z.ZodType<T>
 }
+
+export type DirectoryEventHandler<T, K extends keyof DirectoryEvents<T>> =
+  (event: DirectoryEvents<T>[K]) => Promise<void> | void
 
 export type DirectoryEvents<T> = {
   changed: {
@@ -26,47 +29,21 @@ export interface DirectoryMeta {
   lastFetched?: number
 }
 
+/**
+ * Validated, retry-safe local replica of one Hackfed directory document.
+ */
 export class Directory<T> {
-  /**
-   * HTTP client for interacting with the directory API
-   */
-  private apiClient: KyInstance
-
-  /**
-   * Local replica of the directory data
-   */
+  private readonly apiClient: KyInstance
   private data: null | T = null
-
-  /**
-   * Local event bus
-   */
-  private events = mitt<DirectoryEvents<T>>()
-
-  /**
-   * Named logger instance
-   */
-  private logger: Logger<unknown>
-
-  /**
-   * Last-known metadata about the directory
-   */
+  private readonly handlers = new Set<DirectoryEventHandler<T, 'changed'>>()
+  private readonly logger: Logger<unknown>
   private meta: DirectoryMeta = {}
+  private polling = false
+  private timerId: ReturnType<typeof setTimeout> | undefined
+  private updatePromise: Promise<boolean> | undefined
 
-  /**
-   * Timer ID for the polling interval
-   */
-  private timerId: NodeJS.Timeout | undefined
-
-  /**
-   * Check if the directory data is expired based on the cache interval.
-   * @returns True if the data is expired, false otherwise.
-   */
   private get isExpired (): boolean {
     if (!this.meta.lastFetched) {
-      return true
-    }
-
-    if (!this.config.directory.refreshIntervalSeconds) {
       return true
     }
 
@@ -74,109 +51,131 @@ export class Directory<T> {
     return elapsed > this.config.directory.refreshIntervalSeconds * 1000
   }
 
-  constructor (
-    private config: DirectoryConfig<T>
-  ) {
-    this.apiClient = ky.create({
+  constructor (private readonly config: DirectoryConfig<T>) {
+    this.apiClient = config.apiClient ?? ky.create({
       prefix: this.config.directory.root,
     })
 
-    this.logger = this.config.parentLogger.getSubLogger({
-      name: 'Directory'
-    })
+    this.logger = this.config.parentLogger.getSubLogger({ name: 'Directory' })
   }
 
-  /**
-   * Get the current data of the directory, validated against the schema.
-   * @returns The current data of the directory.
-   */
   public async get (): Promise<T> {
     if (this.isExpired) {
       await this.update()
     }
 
-    return this.config.schema.parse(this.data)
+    if (this.data === null) {
+      throw new Error(`${this.config.kind} directory returned no data`)
+    }
+
+    return this.data
   }
 
-  /**
-   * Unsubscribe from events emitted by the directory controller.
-   * @param event Event name
-   * @param handler Event handler function
-   */
-  public off<K extends keyof DirectoryEvents<T>> (
-    event: K,
-    handler: (event: DirectoryEvents<T>[K]) => void
+  public off (
+    _event: 'changed',
+    handler: DirectoryEventHandler<T, 'changed'>
   ): void {
-    this.events.off(event, handler)
+    this.handlers.delete(handler)
   }
 
-  /**
-   * Subscribe to events emitted by the directory controller.
-   * @param event Event name
-   * @param handler Event handler function
-   */
-  public on<K extends keyof DirectoryEvents<T>> (
-    event: K,
-    handler: (event: DirectoryEvents<T>[K]) => void
+  public on (
+    _event: 'changed',
+    handler: DirectoryEventHandler<T, 'changed'>
   ): void {
-    this.events.on(event, handler)
+    this.handlers.add(handler)
   }
 
-  /**
-   * Enable polling of the directory data.
-   */
   public startPolling (): void {
-    this.timerId = setInterval(async () => {
-      try {
-        await this.update()
-      } catch (error) {
-        this.logger.error('failed to update directory data:', error)
-      }
-    }, this.config.directory.refreshIntervalSeconds * 1000)
+    if (this.polling) {
+      return
+    }
+
+    this.polling = true
+    this.scheduleNextPoll()
   }
 
-  /**
-   * Disable polling of the directory data.
-   */
   public stopPolling (): void {
+    this.polling = false
     if (this.timerId) {
-      clearInterval(this.timerId)
+      clearTimeout(this.timerId)
       this.timerId = undefined
     }
   }
 
-  /**
-   * Update the directory data and emit a "changed" event if the data has changed.
-   * @returns True if the data has changed, false otherwise.
-   */
   public async update (): Promise<boolean> {
+    if (this.updatePromise) {
+      return this.updatePromise
+    }
+
+    const updatePromise = this.performUpdate()
+    this.updatePromise = updatePromise
+
+    try {
+      return await updatePromise
+    } finally {
+      if (this.updatePromise === updatePromise) {
+        this.updatePromise = undefined
+      }
+    }
+  }
+
+  private async performUpdate (): Promise<boolean> {
     this.logger.debug('updating...')
 
-    const request = await this.apiClient.get(`${this.config.kind}.json`, {
-      headers: {
-        'If-None-Match': this.meta.lastEtag,
-      },
+    const headers: Record<string, string> = {}
+    if (this.meta.lastEtag) {
+      headers['If-None-Match'] = this.meta.lastEtag
+    }
+
+    const response = await this.apiClient.get(`${this.config.kind}.json`, {
+      headers,
       throwHttpErrors (status) {
         return status !== 304
       },
     })
 
-    // Etag match, so 304 Not Modified. No need to update the data.
-    if (request.status === 304) {
+    if (response.status === 304) {
       this.meta.lastFetched = Date.now()
-
       this.logger.debug('directory data is up-to-date')
       return false
     }
 
-    const data = await request.json()
-    this.data = this.config.schema.parse(data)
+    const candidate = this.config.schema.parse(await response.json())
 
-    this.meta.lastEtag = request.headers.get('etag') ?? undefined
-    this.meta.lastFetched = Date.now()
+    // Applying the candidate is part of acknowledging it. If a handler fails,
+    // preserve the previous ETag so the same document is fetched and retried.
+    for (const handler of this.handlers) {
+      await handler({ data: candidate })
+    }
 
-    this.events.emit('changed', { data: this.data })
+    this.data = candidate
+    this.meta = {
+      lastEtag: response.headers.get('etag') ?? undefined,
+      lastFetched: Date.now(),
+    }
+
     this.logger.debug('directory data updated. New etag:', this.meta.lastEtag)
     return true
+  }
+
+  private async pollOnce (): Promise<void> {
+    try {
+      await this.update()
+    } catch (error) {
+      this.logger.error('failed to update directory data:', error)
+    } finally {
+      this.timerId = undefined
+      this.scheduleNextPoll()
+    }
+  }
+
+  private scheduleNextPoll (): void {
+    if (!this.polling) {
+      return
+    }
+
+    this.timerId = setTimeout(() => {
+      void this.pollOnce()
+    }, this.config.directory.refreshIntervalSeconds * 1000)
   }
 }

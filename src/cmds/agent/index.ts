@@ -1,23 +1,73 @@
 import type { Command } from 'commander'
 import type { Logger } from 'tslog'
 
-import { Configuration } from '@/lib/config'
+import type { Config } from '@/lib/config/config.schema'
+
+import { Asterisk } from '@/lib/asterisk'
+import { ConfigLoader } from '@/lib/config'
 import { WireGuard } from '@/lib/wireguard'
+
+export interface AgentService {
+  start: () => Promise<void>
+  stop: () => Promise<void> | void
+}
+
+export interface AgentServiceFactories {
+  asterisk: (logger: Logger<unknown>, config: Config) => AgentService
+  wireguard: (logger: Logger<unknown>, config: Config) => AgentService
+}
 
 interface CommandOptions {
   config: string
 }
 
+const defaultFactories: AgentServiceFactories = {
+  asterisk: (logger, config) => new Asterisk(logger, config),
+  wireguard: (logger, config) => new WireGuard(logger, config),
+}
+
 export async function agent (options: CommandOptions, logger: Logger<unknown>) {
-  const configService = new Configuration(logger, options.config)
+  const configService = new ConfigLoader(logger, options.config)
   const config = await configService.load()
+  const services = await startConfiguredServices(config, logger)
 
-  if (config.wireguard) {
-    logger.debug('enabling WireGuard')
-
-    const wireguard = new WireGuard(logger, config)
-    wireguard.start()
+  if (services.length === 0) {
+    logger.warn('no services are enabled')
+    return
   }
+
+  let isShuttingDown = false
+  const shutdown = async (signal: NodeJS.Signals) => {
+    if (isShuttingDown) {
+      return
+    }
+
+    isShuttingDown = true
+    logger.info(`received ${signal}; stopping directory pollers`)
+    process.off('SIGINT', onSigint)
+    process.off('SIGTERM', onSigterm)
+    await stopServices(services)
+  }
+
+  const handleShutdown = async (signal: NodeJS.Signals) => {
+    try {
+      await shutdown(signal)
+    } catch (error: unknown) {
+      logger.error('failed to stop services cleanly', error)
+      process.exitCode = 1
+    }
+  }
+  const onSigint = () => {
+    // EventEmitter does not await listeners; handleShutdown contains its own error handling.
+    void handleShutdown('SIGINT')
+  }
+  const onSigterm = () => {
+    // EventEmitter does not await listeners; handleShutdown contains its own error handling.
+    void handleShutdown('SIGTERM')
+  }
+
+  process.once('SIGINT', onSigint)
+  process.once('SIGTERM', onSigterm)
 }
 
 export default function register (program: Command, rootLogger: Logger<unknown>) {
@@ -25,4 +75,52 @@ export default function register (program: Command, rootLogger: Logger<unknown>)
     .description('Starts the Hackfed agent')
     .option('-c, --config <file>', 'Path to the configuration file', 'config.yaml')
     .action((options: CommandOptions) => agent(options, rootLogger))
+}
+
+export async function startConfiguredServices (
+  config: Config,
+  logger: Logger<unknown>,
+  factories: AgentServiceFactories = defaultFactories
+): Promise<AgentService[]> {
+  const services: AgentService[] = []
+
+  if (config.wireguard) {
+    logger.debug('enabling WireGuard')
+    services.push(factories.wireguard(logger, config))
+  }
+  if (config.telephony?.output?.type === 'asterisk') {
+    logger.debug('enabling Asterisk')
+    services.push(factories.asterisk(logger, config))
+  }
+
+  const started: AgentService[] = []
+  try {
+    for (const service of services) {
+      await service.start()
+      started.push(service)
+    }
+  } catch (error) {
+    await stopServices(started)
+    throw error
+  }
+
+  return started
+}
+
+async function stopServices (services: readonly AgentService[]): Promise<void> {
+  let firstFailure: unknown
+  for (const service of services.toReversed()) {
+    try {
+      await service.stop()
+    } catch (error) {
+      firstFailure ??= error
+    }
+  }
+
+  if (firstFailure instanceof Error) {
+    throw firstFailure
+  }
+  if (firstFailure) {
+    throw new Error('Failed to stop one or more services', { cause: firstFailure })
+  }
 }

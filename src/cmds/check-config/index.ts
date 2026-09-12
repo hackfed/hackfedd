@@ -1,17 +1,16 @@
 import type { Command } from 'commander'
 import type { Logger } from 'tslog'
 
-import { Configuration } from '@/lib/config'
+import { ConfigLoader } from '@/lib/config'
 
 interface CommandOptions {
   config: string
 }
 
 export async function checkConfig (options: CommandOptions, logger: Logger<unknown>) {
-  const configService = new Configuration(logger, options.config)
-  const config = await configService.load()
+  const configService = new ConfigLoader(logger, options.config)
+  await configService.load()
 
-  logger.debug('%O', config)
   logger.info('Configuration is valid.')
 }
 

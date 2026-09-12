@@ -17,4 +17,9 @@ program
 registerCheckConfig(program, rootLogger)
 registerAgent(program, rootLogger)
 
-program.parse()
+try {
+  await program.parseAsync()
+} catch (error) {
+  rootLogger.error('command failed', error)
+  process.exitCode = 1
+}
