@@ -32,6 +32,8 @@ selects the local exchange, and writes exactly three generated fragments:
 The outbound context is `[hackfed-outbound]`. It includes a local loopback route
 derived from this node's directory prefix, so dialing the full local Hackfed
 number reaches the corresponding PJSIP extension without changing caller ID.
+Canonical `+`-prefixed and legacy digit-only Hackfed numbers are both accepted;
+canonical numbers are normalized to digits before internal and IAX routing.
 Generated inbound peer contexts call the operator-owned
 `HackfedIncomingRouter` Gosub and pass the local subscriber suffix as `ARG1`, or
 an empty value for a call to the exact local prefix.

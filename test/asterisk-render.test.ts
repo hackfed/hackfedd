@@ -23,10 +23,12 @@ describe('Asterisk rendering', () => {
   test('renders stable peers and safe, prefix-independent dialplans', () => {
     const model = buildAsteriskModel(telephonyDirectory, options)
     const artifacts = renderAsteriskArtifacts(model)
+    const localPeer = makePeerName('xkem', 'primary')
     const bkspPeer = makePeerName('bksp', 'primary')
     const fabPeer = makePeerName('fab20', 'primary')
 
     expect(model.localPrefix).toBe('7509101')
+    expect(model.localPeerName).toBe(localPeer)
     expect(model.peers.map(peer => peer.peerName)).toEqual([bkspPeer, fabPeer])
     expect(model.peers[0]).toMatchObject({
       codecs: ['g722', 'ulaw'],
@@ -41,7 +43,8 @@ describe('Asterisk rendering', () => {
       prefix: '12025550123',
     })
 
-    expect(artifacts['iax.conf']).toContain(`[${bkspPeer}]\ntype = friend`)
+    expect(artifacts['iax.conf']).toContain(`[${bkspPeer}]\ntype = friend\nusername = ${localPeer}`)
+    expect(artifacts['iax.conf']).toContain(`[${fabPeer}]\ntype = friend\nusername = ${localPeer}`)
     expect(artifacts['iax.conf']).toContain('host = fd79:7636:1f08:883d::8\nport = 4569')
     expect(artifacts['iax.conf']).toContain('allow = g722,ulaw')
     expect(artifacts['iax.conf']).not.toContain('skip')
@@ -49,6 +52,15 @@ describe('Asterisk rendering', () => {
     expect(artifacts['extensions-outbound.conf']).toContain('${HACKFED_INBOUND}" = "1"]?invalid')
     expect(artifacts['extensions-outbound.conf']).toContain(
       'exten => _7509101.,1,Dial(PJSIP/${EXTEN:7},30,rT)'
+    )
+    expect(artifacts['extensions-outbound.conf']).toContain(
+      'exten => _+7509101.,1,Goto(hackfed-outbound,${EXTEN:1},1)'
+    )
+    expect(artifacts['extensions-outbound.conf']).toContain(
+      'exten => _+7509008!,1,Goto(hackfed-outbound,${EXTEN:1},1)'
+    )
+    expect(artifacts['extensions-outbound.conf']).toContain(
+      'exten => _+12025550123!,1,Goto(hackfed-outbound,${EXTEN:1},1)'
     )
     expect(artifacts['extensions-outbound.conf']).toContain(`Dial(IAX2/${fabPeer}/\${HF_DESTINATION},30,rT)`)
     expect(artifacts['extensions-outbound.conf']).toContain('Set(CALLERID(num)=+${HF_CALLER_DIGITS})')
@@ -75,6 +87,20 @@ describe('Asterisk rendering', () => {
     expect(inbound).toContain('${HF_DESTINATION:7}')
     expect(inbound).toContain('FILTER(0-9,${EXTEN})')
     expect(inbound).toContain('${LEN(${HF_DESTINATION})} = ${LEN(${EXTEN})}')
+  })
+
+  test('uses the local exchange identity as the IAX username on reciprocal peers', () => {
+    const xkemArtifacts = renderAsteriskArtifacts(buildAsteriskModel(telephonyDirectory, options))
+    const bkspArtifacts = renderAsteriskArtifacts(buildAsteriskModel(telephonyDirectory, {
+      ...options,
+      ignoredOrgs: ['fab20', 'skip'],
+      orgId: 'bksp',
+    }))
+
+    expect(xkemArtifacts['iax.conf']).toContain(`username = ${makePeerName('xkem', 'primary')}`)
+    expect(bkspArtifacts['iax.conf']).toContain(
+      `[${makePeerName('xkem', 'primary')}]\ntype = friend\nusername = ${makePeerName('bksp', 'primary')}`
+    )
   })
 
   test('creates distinct names for the same exchange id in different organizations', () => {

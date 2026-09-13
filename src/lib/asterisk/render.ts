@@ -13,6 +13,7 @@ export interface AsteriskArtifacts {
 }
 
 export interface AsteriskModel {
+  localPeerName: string
   localPrefix: string
   peers: AsteriskPeer[]
 }
@@ -63,9 +64,10 @@ export function buildAsteriskModel (
 
   // Validate the local endpoint as well, even though it is not rendered as a peer.
   parseEndpoint(localExchange.endpoint)
+  const localPeerName = makePeerName(options.orgId, options.exchangeId)
   const localPrefix = normalizePrefix(localExchange.prefix)
   const ignoredOrgs = new Set(options.ignoredOrgs)
-  const peerNames = new Set<string>()
+  const peerNames = new Set([localPeerName])
 
   const peers = directory.orgs
     .flatMap(org => ignoredOrgs.has(org.orgId)
@@ -106,7 +108,7 @@ export function buildAsteriskModel (
     prefixes.add(peer.prefix)
   }
 
-  return { localPrefix, peers }
+  return { localPeerName, localPrefix, peers }
 }
 
 export function makePeerName (orgId: string, exchangeId: string): string {
@@ -171,10 +173,11 @@ function comparePeers (left: AsteriskPeer, right: AsteriskPeer): number {
     left.port - right.port
 }
 
-function renderIax ({ peers }: AsteriskModel): string {
+function renderIax ({ localPeerName, peers }: AsteriskModel): string {
   const sections = peers.map(peer => `; (${peer.orgId}) ${peer.displayName}
 [${peer.peerName}]
 type = friend
+username = ${localPeerName}
 host = ${peer.host}
 port = ${peer.port}
 context = ${peer.context}
@@ -217,6 +220,10 @@ function renderOutbound ({ localPrefix, peers }: AsteriskModel): string {
   const foreignPrefixChecks = peers
     .map(peer => ` same => n,GotoIf($["\${HF_CALLER_DIGITS:0:${peer.prefix.length}}" = "${peer.prefix}"]?invalid)`)
     .join('\n')
+  const canonicalAliases = [
+    `exten => _+${localPrefix}.,1,Goto(hackfed-outbound,\${EXTEN:1},1)`,
+    ...peers.map(peer => `exten => _+${peer.prefix}!,1,Goto(hackfed-outbound,\${EXTEN:1},1)`),
+  ].join('\n')
   const loopback = `; Calls to the local Hackfed prefix
 exten => _${localPrefix}.,1,Dial(PJSIP/\${EXTEN:${localPrefix.length}},30,rT)
  same => n,Hangup()
@@ -244,7 +251,8 @@ ${foreignPrefixChecks}
  same => n(invalid),Hangup(28)
 `)
 
-  return `${GENERATED_HEADER}\n[hackfed-outbound]\n${loopback}\n${routes.join('\n')}`
+  return `${GENERATED_HEADER}\n[hackfed-outbound]\n; Accept canonical E.164 dial strings and normalize them for internal routing
+${canonicalAliases}\n\n${loopback}\n${routes.join('\n')}`
 }
 
 function sanitizeDisplayText (value: string): string {
