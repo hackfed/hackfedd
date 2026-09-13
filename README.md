@@ -43,8 +43,11 @@ At the Hackfed boundary, caller numbers are canonicalized to E.164-style
 caller numbers are supported; a caller claiming another organization's prefix
 is rejected. Inbound calls accept canonical or legacy digit-only caller numbers,
 verify the sending peer's prefix, and deliver the canonical `+` form locally.
-Inbound caller names are prefixed with the verified organization name (for
-example, `BKSP: Alice`); an empty caller name is presented as just `BKSP`.
+Inbound caller names are prefixed with the verified short organization ID (for
+example, `bksp: Alice`); an empty caller name is presented as just `bksp`.
+Connected-line updates are passed over IAX and prefixed by the destination's
+short organization ID, so a remote extension can be displayed as `xkem: Alice`
+to the caller. The full organization display name is not used in either prefix.
 
 The daemon never edits parent Asterisk or FreePBX files. Follow either the
 [`standalone Asterisk`](examples/asterisk/standalone/README.md) or

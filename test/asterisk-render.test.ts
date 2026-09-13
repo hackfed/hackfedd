@@ -29,23 +29,27 @@ describe('Asterisk rendering', () => {
 
     expect(model.localPrefix).toBe('7509101')
     expect(model.localPeerName).toBe(localPeer)
+    expect(model.localShortName).toBe('xkem')
     expect(model.peers.map(peer => peer.peerName)).toEqual([bkspPeer, fabPeer])
     expect(model.peers[0]).toMatchObject({
       codecs: ['g722', 'ulaw'],
       host: 'fd79:7636:1f08:883d::8',
       port: 4569,
       prefix: '7509008',
+      shortName: 'bksp',
     })
     expect(model.peers[1]).toMatchObject({
       codecs: ['opus'],
       host: '192.0.2.9',
       port: 4570,
       prefix: '12025550123',
+      shortName: 'fab20',
     })
 
     expect(artifacts['iax.conf']).toContain(`[${bkspPeer}]\ntype = friend\nusername = ${localPeer}`)
     expect(artifacts['iax.conf']).toContain(`[${fabPeer}]\ntype = friend\nusername = ${localPeer}`)
     expect(artifacts['iax.conf']).toContain('host = fd79:7636:1f08:883d::8\nport = 4569')
+    expect(artifacts['iax.conf']).toContain('connectedline = yes')
     expect(artifacts['iax.conf']).toContain('allow = g722,ulaw')
     expect(artifacts['iax.conf']).not.toContain('skip')
     expect(artifacts['extensions-outbound.conf']).toContain('[hackfed-outbound]')
@@ -73,7 +77,15 @@ describe('Asterisk rendering', () => {
     expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(num)=+12025550123${HF_CALLER_DIGITS:11})')
     expect(artifacts['extensions-inbound.conf']).toContain('Set(HF_CALLER_NAME=${CALLERID(name)})')
     expect(artifacts['extensions-inbound.conf']).toContain('Set(__HACKFED_INBOUND=1)')
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(name)=B4CKSP4CE: ${HF_CALLER_NAME})')
+    expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(name)=bksp: ${HF_CALLER_NAME})')
+    expect(artifacts['extensions-inbound.conf']).toContain(`[${localPeer}-connected-line]`)
+    expect(artifacts['extensions-inbound.conf']).toContain(
+      `Set(CONNECTED_LINE_SEND_SUB=${localPeer}-connected-line,s,1)`
+    )
+    expect(artifacts['extensions-inbound.conf']).toContain(
+      'Set(CONNECTEDLINE(name,i)=xkem: ${HF_CONNECTED_NAME})'
+    )
+    expect(artifacts['extensions-inbound.conf']).toContain('Set(CONNECTEDLINE(name,i)=xkem)')
     expect(artifacts['extensions-inbound.conf']).toContain('${LEN(${HF_CALLER_NAME})} = 0]?caller-name-ready')
     expect(artifacts['extensions-inbound.conf']).toContain('Hangup(28)')
     expect(artifacts['extensions-inbound.conf']).not.toContain('#include evil')
@@ -101,6 +113,16 @@ describe('Asterisk rendering', () => {
     expect(bkspArtifacts['iax.conf']).toContain(
       `[${makePeerName('xkem', 'primary')}]\ntype = friend\nusername = ${makePeerName('bksp', 'primary')}`
     )
+  })
+
+  test('uses short organization ids for caller and connected-line name prefixes', () => {
+    const inbound = renderAsteriskArtifacts(buildAsteriskModel(telephonyDirectory, options))['extensions-inbound.conf']
+
+    expect(inbound).toContain('Set(CALLERID(name)=bksp)')
+    expect(inbound).toContain('Set(CALLERID(name)=fab20)')
+    expect(inbound).toContain('Set(CONNECTEDLINE(name,i)=xkem: ${HF_CONNECTED_NAME})')
+    expect(inbound).not.toContain('Set(CALLERID(name)=B4CKSP4CE)')
+    expect(inbound).not.toContain('Set(CALLERID(name)=Hacker Embassy)')
   })
 
   test('creates distinct names for the same exchange id in different organizations', () => {

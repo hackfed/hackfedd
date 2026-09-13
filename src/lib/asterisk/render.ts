@@ -15,6 +15,7 @@ export interface AsteriskArtifacts {
 export interface AsteriskModel {
   localPeerName: string
   localPrefix: string
+  localShortName: string
   peers: AsteriskPeer[]
 }
 
@@ -29,6 +30,7 @@ export interface AsteriskPeer {
   peerName: string
   port: number
   prefix: string
+  shortName: string
 }
 
 export interface BuildAsteriskModelOptions {
@@ -66,6 +68,7 @@ export function buildAsteriskModel (
   parseEndpoint(localExchange.endpoint)
   const localPeerName = makePeerName(options.orgId, options.exchangeId)
   const localPrefix = normalizePrefix(localExchange.prefix)
+  const localShortName = sanitizeDisplayText(localOrg.orgId)
   const ignoredOrgs = new Set(options.ignoredOrgs)
   const peerNames = new Set([localPeerName])
 
@@ -96,6 +99,7 @@ export function buildAsteriskModel (
         peerName,
         port,
         prefix: normalizePrefix(exchange.prefix),
+        shortName: sanitizeDisplayText(org.orgId),
       }
     })
     .toSorted(comparePeers)
@@ -108,7 +112,7 @@ export function buildAsteriskModel (
     prefixes.add(peer.prefix)
   }
 
-  return { localPeerName, localPrefix, peers }
+  return { localPeerName, localPrefix, localShortName, peers }
 }
 
 export function makePeerName (orgId: string, exchangeId: string): string {
@@ -182,6 +186,7 @@ host = ${peer.host}
 port = ${peer.port}
 context = ${peer.context}
 qualify = yes
+connectedline = yes
 disallow = all
 allow = ${peer.codecs.join(',')}
 `)
@@ -189,7 +194,17 @@ allow = ${peer.codecs.join(',')}
   return `${GENERATED_HEADER}\n${sections.join('\n')}`
 }
 
-function renderInbound ({ localPrefix, peers }: AsteriskModel): string {
+function renderInbound ({ localPeerName, localPrefix, localShortName, peers }: AsteriskModel): string {
+  const connectedLineContext = `${localPeerName}-connected-line`
+  const connectedLineHandler = `; Prefix connected-line names returned to remote callers
+[${connectedLineContext}]
+exten => s,1,Set(LOCAL(HF_CONNECTED_NAME)=\${CONNECTEDLINE(name)})
+ same => n,GotoIf($[\${LEN(\${HF_CONNECTED_NAME})} = 0]?org-only)
+ same => n,Set(CONNECTEDLINE(name,i)=${localShortName}: \${HF_CONNECTED_NAME})
+ same => n,Return()
+ same => n(org-only),Set(CONNECTEDLINE(name,i)=${localShortName})
+ same => n,Return()
+`
   const contexts = peers.map(peer => `; Calls from (${peer.orgId}) ${peer.displayName}
 [${peer.context}]
 exten => _${localPrefix}!,1,Set(HF_DESTINATION=\${FILTER(0-9,\${EXTEN})})
@@ -204,16 +219,17 @@ exten => _${localPrefix}!,1,Set(HF_DESTINATION=\${FILTER(0-9,\${EXTEN})})
  same => n(valid-caller),GotoIf($["\${HF_CALLER_DIGITS:0:${peer.prefix.length}}" = "${peer.prefix}"]?normalized-caller:invalid)
  same => n(normalized-caller),Set(CALLERID(num)=+${peer.prefix}\${HF_CALLER_DIGITS:${peer.prefix.length}})
  same => n,Set(HF_CALLER_NAME=\${CALLERID(name)})
- same => n,Set(CALLERID(name)=${peer.displayName})
+ same => n,Set(CALLERID(name)=${peer.shortName})
  same => n,GotoIf($[\${LEN(\${HF_CALLER_NAME})} = 0]?caller-name-ready)
- same => n,Set(CALLERID(name)=${peer.displayName}: \${HF_CALLER_NAME})
+ same => n,Set(CALLERID(name)=${peer.shortName}: \${HF_CALLER_NAME})
  same => n(caller-name-ready),Set(__HACKFED_INBOUND=1)
+ same => n,Set(CONNECTED_LINE_SEND_SUB=${connectedLineContext},s,1)
  same => n,Gosub(HackfedIncomingRouter,s,1(\${HF_DESTINATION:${localPrefix.length}}))
  same => n,Hangup()
  same => n(invalid),Hangup(28)
 `)
 
-  return `${GENERATED_HEADER}\n${contexts.join('\n')}`
+  return `${GENERATED_HEADER}\n${connectedLineHandler}\n${contexts.join('\n')}`
 }
 
 function renderOutbound ({ localPrefix, peers }: AsteriskModel): string {
