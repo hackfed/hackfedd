@@ -2,6 +2,7 @@ import type { TelephonyDirectory } from '@hackfed/schemas/v1'
 import type { Logger } from 'tslog'
 
 import { TelephonyDirectorySchema } from '@hackfed/schemas/v1'
+import { chmod, mkdir } from 'node:fs/promises'
 import path from 'node:path'
 
 import type { Config } from '@/lib/config/config.schema'
@@ -25,6 +26,7 @@ export interface AsteriskDependencies {
 type AtomicWriter = (targetPath: string, contents: string) => Promise<boolean>
 
 const MODULE_ORDER: readonly AsteriskModule[] = ['chan_iax2.so', 'pbx_config.so']
+const ASTERISK_CONFIG_DIRECTORY_MODE = 0o755
 const ASTERISK_CONFIG_MODE = 0o644
 const ARTIFACT_MODULES: Record<keyof AsteriskArtifacts, AsteriskModule> = {
   'extensions-inbound.conf': 'pbx_config.so',
@@ -75,6 +77,8 @@ export class Asterisk {
       return
     }
 
+    await mkdir(this.outputDirectory, { mode: ASTERISK_CONFIG_DIRECTORY_MODE, recursive: true })
+    await chmod(this.outputDirectory, ASTERISK_CONFIG_DIRECTORY_MODE)
     const directory = await this.directory.get()
     await this.apply(directory, true)
 

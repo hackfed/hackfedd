@@ -102,6 +102,8 @@ describe('Asterisk service', () => {
       'extensions-outbound.conf',
       'iax.conf',
     ])
+    const directoryStats = await stat(outputDirectory)
+    expect(directoryStats.mode & 0o777).toBe(0o755)
     const generatedModes = await Promise.all(generatedFiles.map(async file => {
       const fileStats = await stat(path.join(outputDirectory, file))
       return fileStats.mode & 0o777

@@ -47,7 +47,9 @@ example, `BKSP: Alice`); an empty caller name is presented as just `BKSP`.
 The daemon never edits parent Asterisk or FreePBX files. Follow either the
 [`standalone Asterisk`](examples/asterisk/standalone/README.md) or
 [`FreePBX 17`](examples/asterisk/freepbx/README.md) integration instructions to
-add the one-time includes and create the AMI account.
+add the one-time includes and create the AMI account. The configured output
+directory is maintained with mode `0755`, and generated fragments with mode
+`0644`, so Asterisk process could traverse and read them.
 
 > [!IMPORTANT]
 > The directory currently publishes no IAX authentication credentials.

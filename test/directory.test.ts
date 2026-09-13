@@ -91,6 +91,38 @@ describe('Directory', () => {
     expect(requestCount).toBe(stoppedRequestCount)
   })
 
+  test('retries a partially applied document without blocking successful work', async () => {
+    const ifNoneMatch: Array<null | string> = []
+    const server = Bun.serve({
+      fetch: request => {
+        ifNoneMatch.push(request.headers.get('if-none-match'))
+        if (request.headers.get('if-none-match') === '"v1"') {
+          return new Response(null, { status: 304 })
+        }
+        return Response.json({ value: 1 }, { headers: { ETag: '"v1"' } })
+      },
+      hostname: '127.0.0.1',
+      port: getTestPort(),
+    })
+    servers.push(server)
+
+    const directory = makeDirectory(server.port)
+    let isComplete = false
+    let applyCount = 0
+    directory.on('changed', () => {
+      applyCount++
+      return isComplete
+    })
+
+    expect(await directory.update()).toBeTrue()
+    expect(await directory.update()).toBeTrue()
+    isComplete = true
+    expect(await directory.update()).toBeTrue()
+    expect(await directory.update()).toBeFalse()
+    expect(applyCount).toBe(3)
+    expect(ifNoneMatch).toEqual([null, null, null, '"v1"'])
+  })
+
   test('coalesces overlapping manual updates', async () => {
     let requests = 0
     const server = Bun.serve({

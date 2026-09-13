@@ -16,7 +16,7 @@ export interface DirectoryConfig<T> {
 }
 
 export type DirectoryEventHandler<T, K extends keyof DirectoryEvents<T>> =
-  (event: DirectoryEvents<T>[K]) => Promise<void> | void
+  (event: DirectoryEvents<T>[K]) => unknown
 
 export type DirectoryEvents<T> = {
   changed: {
@@ -85,6 +85,11 @@ export class Directory<T> {
     this.handlers.add(handler)
   }
 
+  /** Force the current document to be fetched again without discarding its data. */
+  public retryCurrent (): void {
+    this.meta.lastEtag = undefined
+  }
+
   public startPolling (): void {
     if (this.polling) {
       return
@@ -144,17 +149,26 @@ export class Directory<T> {
 
     // Applying the candidate is part of acknowledging it. If a handler fails,
     // preserve the previous ETag so the same document is fetched and retried.
+    let shouldAcknowledge = true
     for (const handler of this.handlers) {
-      await handler({ data: candidate })
+      if (await handler({ data: candidate }) === false) {
+        shouldAcknowledge = false
+      }
     }
 
     this.data = candidate
     this.meta = {
-      lastEtag: response.headers.get('etag') ?? undefined,
+      lastEtag: shouldAcknowledge
+        ? response.headers.get('etag') ?? undefined
+        : this.meta.lastEtag,
       lastFetched: Date.now(),
     }
 
-    this.logger.debug('directory data updated. New etag:', this.meta.lastEtag)
+    if (shouldAcknowledge) {
+      this.logger.debug('directory data updated. New etag:', this.meta.lastEtag)
+    } else {
+      this.logger.warn('directory data applied partially; leaving ETag pending for retry')
+    }
     return true
   }
 

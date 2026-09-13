@@ -2,7 +2,9 @@ import type { Logger } from 'tslog'
 
 import { type WireguardDirectory, WireguardDirectorySchema } from '@hackfed/schemas/v1'
 import { Eta } from 'eta'
+import { lookup } from 'node:dns/promises'
 import { access, constants, mkdir } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import path from 'node:path'
 
 import type { Config } from '@/lib/config/config.schema'
@@ -18,13 +20,29 @@ export interface CommandResult {
 }
 
 export type CommandRunner = (command: readonly string[]) => Promise<CommandResult>
+export type HostnameResolver = (hostname: string) => Promise<void>
 export interface WireGuardDependencies {
   directory?: Directory<WireguardDirectory>
+  resolveHostname?: HostnameResolver
   runCommand?: CommandRunner
   writeFile?: AtomicWriter
 }
 
 type AtomicWriter = (targetPath: string, contents: string) => Promise<boolean>
+interface EndpointFailure {
+  address: string
+  endpoint: string
+  message: string
+  orgId: string
+}
+interface RenderedWireGuard {
+  contents: string
+  failures: EndpointFailure[]
+}
+
+async function resolveHostname (hostname: string): Promise<void> {
+  await lookup(hostname)
+}
 
 async function runCommand (command: readonly string[]): Promise<CommandResult> {
   const process = Bun.spawn([...command], {
@@ -45,6 +63,7 @@ export class WireGuard {
   private readonly eta = new Eta()
   private readonly logger: Logger<unknown>
   private pendingReload = false
+  private readonly resolveHostname: HostnameResolver
   private readonly runCommand: CommandRunner
   private started = false
   private readonly writeFile: AtomicWriter
@@ -70,6 +89,7 @@ export class WireGuard {
       schema: WireguardDirectorySchema,
     })
     this.runCommand = dependencies.runCommand ?? runCommand
+    this.resolveHostname = dependencies.resolveHostname ?? resolveHostname
     this.writeFile = dependencies.writeFile ?? writeFileAtomic
   }
 
@@ -81,9 +101,12 @@ export class WireGuard {
     await this.assertWgQuick()
     const directory = await this.directory.get()
     const rendered = await this.renderWgQuick(directory)
-    const isConfigChanged = await this.writeConfig(rendered)
+    const isConfigChanged = await this.writeConfig(rendered.contents)
     await this.initWgQuick(isConfigChanged)
     this.pendingReload = false
+    if (rendered.failures.length > 0) {
+      this.directory.retryCurrent()
+    }
 
     this.directory.on('changed', this.onDirectoryChanged)
     this.directory.startPolling()
@@ -96,9 +119,9 @@ export class WireGuard {
     this.started = false
   }
 
-  private async applyWgQuick (contents: WireguardDirectory): Promise<void> {
+  private async applyWgQuick (contents: WireguardDirectory): Promise<boolean> {
     const rendered = await this.renderWgQuick(contents)
-    if (await this.writeConfig(rendered)) {
+    if (await this.writeConfig(rendered.contents)) {
       this.pendingReload = true
     }
 
@@ -106,6 +129,8 @@ export class WireGuard {
       await this.reloadWgQuick()
       this.pendingReload = false
     }
+
+    return rendered.failures.length === 0
   }
 
   private async assertWgQuick (): Promise<void> {
@@ -197,7 +222,7 @@ export class WireGuard {
 
   private readonly onDirectoryChanged: DirectoryEventHandler<WireguardDirectory, 'changed'> = async ({ data }) => {
     this.logger.info('WireGuard directory updated')
-    await this.applyWgQuick(data)
+    return this.applyWgQuick(data)
   }
 
   private async reloadWgQuick (): Promise<void> {
@@ -222,7 +247,7 @@ export class WireGuard {
     }
   }
 
-  private async renderWgQuick (contents: WireguardDirectory): Promise<string> {
+  private async renderWgQuick (contents: WireguardDirectory): Promise<RenderedWireGuard> {
     const wireguard = this.config.wireguard
     if (!wireguard) {
       throw new Error('WireGuard configuration is missing')
@@ -236,13 +261,20 @@ export class WireGuard {
       wireguard.address,
       this.config.general.ignored_orgs
     )
+    const resolved = await quarantineUnresolvableWireguardEndpoints(filtered, this.resolveHostname)
+    for (const failure of resolved.failures) {
+      this.logger.warn('quarantining WireGuard peer with an unavailable endpoint', failure)
+    }
 
-    return this.eta.renderString(template, {
-      address: wireguard.address,
-      listenPort: wireguard.listen_port,
-      orgs: filtered.orgs,
-      privateKey: wireguard.private_key,
-    })
+    return {
+      contents: this.eta.renderString(template, {
+        address: wireguard.address,
+        listenPort: wireguard.listen_port,
+        orgs: resolved.directory.orgs,
+        privateKey: wireguard.private_key,
+      }),
+      failures: resolved.failures,
+    }
   }
 
   private async restartSystemdUnit (): Promise<void> {
@@ -294,6 +326,23 @@ export function filterWireguardDirectory (
   return { orgs }
 }
 
+export async function quarantineUnresolvableWireguardEndpoints (
+  contents: WireguardDirectory,
+  resolver: HostnameResolver = resolveHostname
+): Promise<{ directory: WireguardDirectory, failures: EndpointFailure[] }> {
+  const resolutions = new Map<string, Promise<void>>()
+  const results = await Promise.all(contents.orgs.map(org => quarantineOrganization(org, resolver, resolutions)))
+
+  return {
+    directory: {
+      orgs: results
+        .map(result => result.org)
+        .filter(org => org.peers.length > 0),
+    },
+    failures: results.flatMap(result => result.failures),
+  }
+}
+
 function getErrorMessage (error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -306,6 +355,56 @@ function normalizeIpv6Address (address: string): string {
 
   const hostname = new URL(`http://[${addressWithoutPrefix}]`).hostname
   return hostname.slice(1, -1)
+}
+
+function parseEndpointHostname (endpoint: string): string {
+  const bracketed = /^\[([^\]]+)]:(\d{1,5})$/.exec(endpoint)
+  const hostname = /^([^:]+):(\d{1,5})$/.exec(endpoint)
+  const match = bracketed ?? hostname
+  const host = match?.[1]
+  const port = Number(match?.[2])
+  if (!host || !Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`Invalid WireGuard endpoint "${endpoint}"`)
+  }
+  return host
+}
+
+async function quarantineOrganization (
+  org: WireguardDirectory['orgs'][number],
+  resolver: HostnameResolver,
+  resolutions: Map<string, Promise<void>>
+): Promise<{ failures: EndpointFailure[], org: WireguardDirectory['orgs'][number] }> {
+  const failures: EndpointFailure[] = []
+  const peers = []
+
+  for (const peer of org.peers) {
+    if (!peer.endpoint) {
+      peers.push(peer)
+      continue
+    }
+
+    try {
+      const hostname = parseEndpointHostname(peer.endpoint)
+      if (isIP(hostname) === 0) {
+        let resolution = resolutions.get(hostname)
+        if (!resolution) {
+          resolution = resolver(hostname)
+          resolutions.set(hostname, resolution)
+        }
+        await resolution
+      }
+      peers.push(peer)
+    } catch (error) {
+      failures.push({
+        address: peer.address,
+        endpoint: peer.endpoint,
+        message: getErrorMessage(error),
+        orgId: org.orgId,
+      })
+    }
+  }
+
+  return { failures, org: { ...org, peers } }
 }
 
 function sanitizeWireguardComment (value: string): string {
