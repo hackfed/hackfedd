@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import { AmiHttpClient, parseAmiResponse } from '@/lib/asterisk/ami'
 
-import { getTestPort, testLogger } from './helpers'
+import { getRejectedError, getTestPort, testLogger } from './helpers'
 
 interface RecordedRequest {
   cookie: null | string
@@ -117,15 +117,6 @@ function amiResponse (
     : `Response: ${response}\r\nMessage: ${message}\r\n\r\n`
 
   return new Response(body, headers ? { headers } : undefined)
-}
-
-async function getRejectedError (promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error))
-  }
-  throw new Error('Expected promise to reject')
 }
 
 function startAmiServer (isHtml: boolean, requests: RecordedRequest[]): ReturnType<typeof Bun.serve> {

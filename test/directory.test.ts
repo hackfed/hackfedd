@@ -3,7 +3,7 @@ import { z } from 'zod'
 
 import { Directory } from '@/lib/common/directory'
 
-import { getTestPort, testLogger } from './helpers'
+import { getRejectedError, getTestPort, testLogger } from './helpers'
 
 const servers: Array<ReturnType<typeof Bun.serve>> = []
 const schema = z.object({ value: z.number() })
@@ -141,15 +141,6 @@ describe('Directory', () => {
     expect(requests).toBe(1)
   })
 })
-
-async function getRejectedError (promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error))
-  }
-  throw new Error('Expected promise to reject')
-}
 
 function makeDirectory (port: number | undefined, refreshIntervalSeconds = 60): Directory<z.infer<typeof schema>> {
   if (!port) {

@@ -36,38 +36,7 @@ export async function agent (options: CommandOptions, logger: Logger<unknown>) {
     return
   }
 
-  let isShuttingDown = false
-  const shutdown = async (signal: NodeJS.Signals) => {
-    if (isShuttingDown) {
-      return
-    }
-
-    isShuttingDown = true
-    logger.info(`received ${signal}; stopping directory pollers`)
-    process.off('SIGINT', onSigint)
-    process.off('SIGTERM', onSigterm)
-    await stopServices(services)
-  }
-
-  const handleShutdown = async (signal: NodeJS.Signals) => {
-    try {
-      await shutdown(signal)
-    } catch (error: unknown) {
-      logger.error('failed to stop services cleanly', error)
-      process.exitCode = 1
-    }
-  }
-  const onSigint = () => {
-    // EventEmitter does not await listeners; handleShutdown contains its own error handling.
-    void handleShutdown('SIGINT')
-  }
-  const onSigterm = () => {
-    // EventEmitter does not await listeners; handleShutdown contains its own error handling.
-    void handleShutdown('SIGTERM')
-  }
-
-  process.once('SIGINT', onSigint)
-  process.once('SIGTERM', onSigterm)
+  listenForShutdown(services, logger)
 }
 
 export default function register (program: Command, rootLogger: Logger<unknown>) {
@@ -105,6 +74,35 @@ export async function startConfiguredServices (
   }
 
   return started
+}
+
+function listenForShutdown (services: AgentService[], logger: Logger<unknown>): void {
+  let isStopping = false
+  const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
+    if (isStopping) {
+      return
+    }
+
+    isStopping = true
+    process.off('SIGINT', onSigint)
+    process.off('SIGTERM', onSigterm)
+    logger.info(`received ${signal}; stopping directory pollers`)
+    try {
+      await stopServices(services)
+    } catch (error: unknown) {
+      logger.error('failed to stop services cleanly', error)
+      process.exitCode = 1
+    }
+  }
+  const onSigint = () => {
+    void shutdown('SIGINT')
+  }
+  const onSigterm = () => {
+    void shutdown('SIGTERM')
+  }
+
+  process.once('SIGINT', onSigint)
+  process.once('SIGTERM', onSigterm)
 }
 
 async function stopServices (services: readonly AgentService[]): Promise<void> {

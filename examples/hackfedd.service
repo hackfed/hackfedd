@@ -10,7 +10,8 @@ Type=simple
 User=root
 Group=root
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/root/.bun/bin
-ExecStart=/root/.bun/bin/bunx --bun hackfed/hackfedd --config /etc/hackfed/config.yaml
+WorkingDirectory=/opt/hackfedd
+ExecStart=/root/.bun/bin/bun /opt/hackfedd/src/index.ts agent --config /etc/hackfedd/config.yaml
 Restart=on-failure
 RestartSec=10
 UMask=0077

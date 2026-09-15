@@ -20,7 +20,7 @@ const options = {
 }
 
 describe('Asterisk rendering', () => {
-  test('renders stable peers and safe, prefix-independent dialplans', () => {
+  test('renders stable peers and safe, prefix-independent dialplans', async () => {
     const model = buildAsteriskModel(telephonyDirectory, options)
     const artifacts = renderAsteriskArtifacts(model)
     const localPeer = makePeerName('xkem', 'primary')
@@ -46,49 +46,12 @@ describe('Asterisk rendering', () => {
       shortName: 'fab20',
     })
 
-    expect(artifacts['iax.conf']).toContain(`[${bkspPeer}]\ntype = friend\nusername = ${localPeer}`)
-    expect(artifacts['iax.conf']).toContain(`[${fabPeer}]\ntype = friend\nusername = ${localPeer}`)
-    expect(artifacts['iax.conf']).toContain('host = fd79:7636:1f08:883d::8\nport = 4569')
-    expect(artifacts['iax.conf']).toContain('connectedline = yes')
-    expect(artifacts['iax.conf']).toContain('bandwidth = high')
-    expect(artifacts['iax.conf']).toContain('allow = g722,ulaw')
+    for (const name of ['iax.conf', 'extensions-inbound.conf', 'extensions-outbound.conf'] as const) {
+      const expected = await Bun.file(new URL(`fixtures/asterisk/${name}`, import.meta.url)).text()
+      expect(artifacts[name]).toBe(expected)
+    }
+
     expect(artifacts['iax.conf']).not.toContain('skip')
-    expect(artifacts['extensions-outbound.conf']).toContain('[hackfed-outbound]')
-    expect(artifacts['extensions-outbound.conf']).toContain('${HACKFED_INBOUND}" = "1"]?invalid')
-    expect(artifacts['extensions-outbound.conf']).toContain(
-      'exten => _7509101.,1,Dial(PJSIP/${EXTEN:7},30,rT)'
-    )
-    expect(artifacts['extensions-outbound.conf']).toContain(
-      'exten => _+7509101.,1,Goto(hackfed-outbound,${EXTEN:1},1)'
-    )
-    expect(artifacts['extensions-outbound.conf']).toContain(
-      'exten => _+7509008!,1,Goto(hackfed-outbound,${EXTEN:1},1)'
-    )
-    expect(artifacts['extensions-outbound.conf']).toContain(
-      'exten => _+12025550123!,1,Goto(hackfed-outbound,${EXTEN:1},1)'
-    )
-    expect(artifacts['extensions-outbound.conf']).toContain(`Dial(IAX2/${fabPeer}/\${HF_DESTINATION},30,rT)`)
-    expect(artifacts['extensions-outbound.conf']).toContain('Set(CALLERID(num)=+${HF_CALLER_DIGITS})')
-    expect(artifacts['extensions-outbound.conf']).toContain('Set(HF_CALLER_DIGITS=7509101${HF_CALLER_DIGITS})')
-    expect(artifacts['extensions-outbound.conf']).toContain('${HF_CALLER_DIGITS:0:7}" = "7509101"')
-    expect(artifacts['extensions-outbound.conf']).toContain('${HF_CALLER_HAD_PLUS} = 1]?invalid')
-    expect(artifacts['extensions-outbound.conf']).toContain('${HF_CALLER_DIGITS:0:7}" = "7509008"')
-    expect(artifacts['extensions-inbound.conf']).toContain('Gosub(HackfedIncomingRouter,s,1(${HF_DESTINATION:7}))')
-    expect(artifacts['extensions-inbound.conf']).toContain('${HF_CALLER_DIGITS:0:11}')
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(num)=+12025550123${HF_CALLER_DIGITS:11})')
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(HF_CALLER_NAME=${CALLERID(name)})')
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(__HACKFED_INBOUND=1)')
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(CALLERID(name)=bksp: ${HF_CALLER_NAME})')
-    expect(artifacts['extensions-inbound.conf']).toContain(`[${localPeer}-connected-line]`)
-    expect(artifacts['extensions-inbound.conf']).toContain(
-      `Set(CONNECTED_LINE_SEND_SUB=${localPeer}-connected-line,s,1)`
-    )
-    expect(artifacts['extensions-inbound.conf']).toContain(
-      'Set(CONNECTEDLINE(name,i)=xkem: ${HF_CONNECTED_NAME})'
-    )
-    expect(artifacts['extensions-inbound.conf']).toContain('Set(CONNECTEDLINE(name,i)=xkem)')
-    expect(artifacts['extensions-inbound.conf']).toContain('${LEN(${HF_CALLER_NAME})} = 0]?caller-name-ready')
-    expect(artifacts['extensions-inbound.conf']).toContain('Hangup(28)')
     expect(artifacts['extensions-inbound.conf']).not.toContain('#include evil')
     expect(artifacts['extensions-inbound.conf']).not.toContain('${SHELL(id)}')
   })

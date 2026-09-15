@@ -1,0 +1,34 @@
+; Prefix connected-line names returned to remote callers
+[<%= it.localPeerName %>-connected-line]
+exten => s,1,Set(LOCAL(HF_CONNECTED_NAME)=${CONNECTEDLINE(name)})
+ same => n,GotoIf($[${LEN(${HF_CONNECTED_NAME})} = 0]?org-only)
+ same => n,Set(CONNECTEDLINE(name,i)=<%= it.localShortName %>: ${HF_CONNECTED_NAME})
+ same => n,Return()
+ same => n(org-only),Set(CONNECTEDLINE(name,i)=<%= it.localShortName %>)
+ same => n,Return()
+
+<% it.peers.forEach(peer => { -%>
+; Calls from (<%= peer.orgId %>) <%= peer.displayName %>
+[<%= peer.context %>]
+exten => _<%= it.localPrefix %>!,1,Set(HF_DESTINATION=${FILTER(0-9,${EXTEN})})
+ same => n,GotoIf($[${LEN(${HF_DESTINATION})} = ${LEN(${EXTEN})}]?valid-destination:invalid)
+ same => n(valid-destination),Set(HF_CALLER_RAW=${CALLERID(num)})
+ same => n,GotoIf($["${HF_CALLER_RAW:0:1}" = "+"]?caller-strip-plus)
+ same => n,Set(HF_CALLER_BODY=${HF_CALLER_RAW})
+ same => n,Goto(caller-validate)
+ same => n(caller-strip-plus),Set(HF_CALLER_BODY=${HF_CALLER_RAW:1})
+ same => n(caller-validate),Set(HF_CALLER_DIGITS=${FILTER(0-9,${HF_CALLER_BODY})})
+ same => n,GotoIf($[${LEN(${HF_CALLER_DIGITS})} = ${LEN(${HF_CALLER_BODY})} & ${LEN(${HF_CALLER_DIGITS})} > 0]?valid-caller:invalid)
+ same => n(valid-caller),GotoIf($["${HF_CALLER_DIGITS:0:<%= peer.prefix.length %>}" = "<%= peer.prefix %>"]?normalized-caller:invalid)
+ same => n(normalized-caller),Set(CALLERID(num)=+<%= peer.prefix %>${HF_CALLER_DIGITS:<%= peer.prefix.length %>})
+ same => n,Set(HF_CALLER_NAME=${CALLERID(name)})
+ same => n,Set(CALLERID(name)=<%= peer.shortName %>)
+ same => n,GotoIf($[${LEN(${HF_CALLER_NAME})} = 0]?caller-name-ready)
+ same => n,Set(CALLERID(name)=<%= peer.shortName %>: ${HF_CALLER_NAME})
+ same => n(caller-name-ready),Set(__HACKFED_INBOUND=1)
+ same => n,Set(CONNECTED_LINE_SEND_SUB=<%= it.localPeerName %>-connected-line,s,1)
+ same => n,Gosub(HackfedIncomingRouter,s,1(${HF_DESTINATION:<%= it.localPrefix.length %>}))
+ same => n,Hangup()
+ same => n(invalid),Hangup(28)
+
+<% }) -%>

@@ -48,6 +48,7 @@ export class AmiHttpClient implements AsteriskReloader {
     } catch (error) {
       failure = error
     } finally {
+      // Keep a reload error as the primary failure if logoff also fails.
       try {
         await this.request({ Action: 'Logoff' }, sessionCookie)
       } catch (error) {
@@ -118,34 +119,42 @@ export class AmiHttpClient implements AsteriskReloader {
 }
 
 export function parseAmiResponse (body: string): Map<string, string> {
-  const parsed = new Map<string, string>()
-
-  if (/<(?:html|table|tr|td)\b/i.test(body)) {
-    const { document } = new JSDOM(body).window
-    for (const row of document.querySelectorAll('tr')) {
-      const cells = row.querySelectorAll('th, td')
-      if (cells.length < 2) {
-        continue
-      }
-
-      const name = cells.item(0).textContent.trim()
-      const value = cells.item(1).textContent.trim()
-      if (name && value) {
-        parsed.set(name.replace(/:$/, ''), value)
-      }
-    }
-  } else {
-    for (const line of body.split(/\r?\n/)) {
-      const separator = line.indexOf(':')
-      if (separator > 0) {
-        parsed.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim())
-      }
-    }
-  }
+  const parsed = /<(?:html|table|tr|td)\b/i.test(body)
+    ? parseHtmlAmiResponse(body)
+    : parseRawAmiResponse(body)
 
   if (parsed.size === 0) {
     throw new Error('AMI response parsing failed: no response fields found')
   }
 
+  return parsed
+}
+
+function parseHtmlAmiResponse (body: string): Map<string, string> {
+  const parsed = new Map<string, string>()
+  const { document } = new JSDOM(body).window
+  for (const row of document.querySelectorAll('tr')) {
+    const cells = row.querySelectorAll('th, td')
+    if (cells.length < 2) {
+      continue
+    }
+
+    const name = cells.item(0).textContent.trim()
+    const value = cells.item(1).textContent.trim()
+    if (name && value) {
+      parsed.set(name.replace(/:$/, ''), value)
+    }
+  }
+  return parsed
+}
+
+function parseRawAmiResponse (body: string): Map<string, string> {
+  const parsed = new Map<string, string>()
+  for (const line of body.split(/\r?\n/)) {
+    const separator = line.indexOf(':')
+    if (separator > 0) {
+      parsed.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim())
+    }
+  }
   return parsed
 }

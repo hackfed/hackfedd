@@ -2,16 +2,26 @@ import type { Logger } from 'tslog'
 
 import { type WireguardDirectory, WireguardDirectorySchema } from '@hackfed/schemas/v1'
 import { Eta } from 'eta'
-import { lookup } from 'node:dns/promises'
 import { access, constants, mkdir } from 'node:fs/promises'
-import { isIP } from 'node:net'
 import path from 'node:path'
 
 import type { Config } from '@/lib/config/config.schema'
 
+import type { ConfigWireguard } from './config.schema'
+
 import { writeFileAtomic } from '../common/atomic-file'
 import { Directory, type DirectoryEventHandler } from '../common/directory'
+import {
+  type EndpointFailure,
+  filterWireguardDirectory,
+  type HostnameResolver,
+  quarantineUnresolvableWireguardEndpoints,
+  resolveHostname,
+} from './peers'
 import defaultTemplate from './templates/wg-quick.eta' with { type: 'text' }
+
+export { filterWireguardDirectory, quarantineUnresolvableWireguardEndpoints } from './peers'
+export type { HostnameResolver } from './peers'
 
 export interface CommandResult {
   exitCode: number
@@ -20,7 +30,6 @@ export interface CommandResult {
 }
 
 export type CommandRunner = (command: readonly string[]) => Promise<CommandResult>
-export type HostnameResolver = (hostname: string) => Promise<void>
 export interface WireGuardDependencies {
   directory?: Directory<WireguardDirectory>
   resolveHostname?: HostnameResolver
@@ -29,19 +38,9 @@ export interface WireGuardDependencies {
 }
 
 type AtomicWriter = (targetPath: string, contents: string) => Promise<boolean>
-interface EndpointFailure {
-  address: string
-  endpoint: string
-  message: string
-  orgId: string
-}
 interface RenderedWireGuard {
   contents: string
   failures: EndpointFailure[]
-}
-
-async function resolveHostname (hostname: string): Promise<void> {
-  await lookup(hostname)
 }
 
 async function runCommand (command: readonly string[]): Promise<CommandResult> {
@@ -62,11 +61,17 @@ export class WireGuard {
   private readonly directory: Directory<WireguardDirectory>
   private readonly eta = new Eta()
   private readonly logger: Logger<unknown>
+  // A failed reload is retried even if the next render produces the same file.
   private pendingReload = false
   private readonly resolveHostname: HostnameResolver
   private readonly runCommand: CommandRunner
   private started = false
+  private readonly wgConfig: ConfigWireguard
   private readonly writeFile: AtomicWriter
+
+  private get systemdUnit (): string {
+    return `wg-quick@${this.wgConfig.interface_name}.service`
+  }
 
   constructor (
     parentLogger: Logger<unknown>,
@@ -78,6 +83,7 @@ export class WireGuard {
     if (!config.wireguard) {
       throw new Error('WireGuard configuration is missing')
     }
+    this.wgConfig = config.wireguard
 
     this.directory = dependencies.directory ?? new Directory({
       directory: {
@@ -139,13 +145,8 @@ export class WireGuard {
       return
     }
 
-    const wireguard = this.config.wireguard
-    if (!wireguard) {
-      throw new Error('WireGuard configuration is missing')
-    }
-
     try {
-      if (wireguard.output.wgquick.strategy === 'cmd') {
+      if (this.wgConfig.output.wgquick.strategy === 'cmd') {
         if (!Bun.which('wg-quick')) {
           throw new Error('wg-quick not found in PATH')
         }
@@ -164,12 +165,12 @@ export class WireGuard {
         // `systemctl status` fails for a valid but inactive unit. `cat` verifies
         // that the unit exists without requiring it to already be running.
         await this.execute(
-          ['systemctl', 'cat', `wg-quick@${wireguard.interface_name}.service`],
+          ['systemctl', 'cat', this.systemdUnit],
           'locate the wg-quick systemd unit'
         )
       }
 
-      const outputPath = wireguard.output.wgquick.path
+      const outputPath = this.wgConfig.output.wgquick.path
       const outputDirectory = path.dirname(outputPath)
       await mkdir(outputDirectory, { recursive: true })
       await access(outputDirectory, constants.W_OK)
@@ -177,7 +178,8 @@ export class WireGuard {
         await access(outputPath, constants.W_OK)
       }
     } catch (error) {
-      throw new Error(`Error during wg-quick pre-flight check: ${getErrorMessage(error)}`)
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`Error during wg-quick pre-flight check: ${message}`)
     }
   }
 
@@ -190,54 +192,43 @@ export class WireGuard {
   }
 
   private async initWgQuick (isConfigChanged: boolean): Promise<void> {
-    const wireguard = this.config.wireguard
-    if (!wireguard) {
-      throw new Error('WireGuard configuration is missing')
-    }
-
-    if (wireguard.output.wgquick.strategy === 'cmd') {
-      const down = await this.runCommand(['wg-quick', 'down', wireguard.interface_name])
+    if (this.wgConfig.output.wgquick.strategy === 'cmd') {
+      const down = await this.runCommand(['wg-quick', 'down', this.wgConfig.interface_name])
       if (down.exitCode === 0) {
         this.logger.info('WireGuard interface brought down successfully')
       } else {
         this.logger.warn('failed to bring down WireGuard interface; it might not have been up', down)
       }
 
-      await this.execute(['wg-quick', 'up', wireguard.interface_name], 'bring up the WireGuard interface')
+      await this.execute(['wg-quick', 'up', this.wgConfig.interface_name], 'bring up the WireGuard interface')
       this.logger.info('WireGuard interface brought up successfully')
     } else {
-      const unit = `wg-quick@${wireguard.interface_name}.service`
-      const active = await this.runCommand(['systemctl', 'is-active', '--quiet', unit])
+      const active = await this.runCommand(['systemctl', 'is-active', '--quiet', this.systemdUnit])
       if (isConfigChanged) {
         await this.restartSystemdUnit()
         this.logger.info('WireGuard interface restarted successfully via systemctl')
       } else if (active.exitCode === 0) {
         this.logger.info('WireGuard interface is already active with the current configuration')
       } else {
-        await this.execute(['systemctl', 'start', unit], 'start the WireGuard systemd unit')
+        await this.execute(['systemctl', 'start', this.systemdUnit], 'start the WireGuard systemd unit')
         this.logger.info('WireGuard interface started successfully via systemctl')
       }
     }
   }
 
-  private readonly onDirectoryChanged: DirectoryEventHandler<WireguardDirectory, 'changed'> = async ({ data }) => {
+  private readonly onDirectoryChanged: DirectoryEventHandler<WireguardDirectory> = async ({ data }) => {
     this.logger.info('WireGuard directory updated')
     return this.applyWgQuick(data)
   }
 
   private async reloadWgQuick (): Promise<void> {
-    const wireguard = this.config.wireguard
-    if (!wireguard) {
-      throw new Error('WireGuard configuration is missing')
-    }
-
-    if (wireguard.output.wgquick.strategy === 'cmd') {
+    if (this.wgConfig.output.wgquick.strategy === 'cmd') {
       await this.execute([
         'bash',
         '-c',
         'exec wg syncconf "$1" <(exec wg-quick strip "$1")',
         'hackfedd-wg-reload',
-        wireguard.interface_name,
+        this.wgConfig.interface_name,
       ], 'reload the WireGuard configuration')
       this.logger.info('WireGuard configuration reloaded successfully')
     } else {
@@ -248,17 +239,12 @@ export class WireGuard {
   }
 
   private async renderWgQuick (contents: WireguardDirectory): Promise<RenderedWireGuard> {
-    const wireguard = this.config.wireguard
-    if (!wireguard) {
-      throw new Error('WireGuard configuration is missing')
-    }
-
-    const template = wireguard.template_path
-      ? await Bun.file(wireguard.template_path).text()
+    const template = this.wgConfig.template_path
+      ? await Bun.file(this.wgConfig.template_path).text()
       : defaultTemplate
     const filtered = filterWireguardDirectory(
       contents,
-      wireguard.address,
+      this.wgConfig.address,
       this.config.general.ignored_orgs
     )
     const resolved = await quarantineUnresolvableWireguardEndpoints(filtered, this.resolveHostname)
@@ -268,148 +254,27 @@ export class WireGuard {
 
     return {
       contents: this.eta.renderString(template, {
-        address: wireguard.address,
-        listenPort: wireguard.listen_port,
+        address: this.wgConfig.address,
+        listenPort: this.wgConfig.listen_port,
         orgs: resolved.directory.orgs,
-        privateKey: wireguard.private_key,
+        privateKey: this.wgConfig.private_key,
       }),
       failures: resolved.failures,
     }
   }
 
   private async restartSystemdUnit (): Promise<void> {
-    const wireguard = this.config.wireguard
-    if (!wireguard) {
-      throw new Error('WireGuard configuration is missing')
-    }
-
     await this.execute(
-      ['systemctl', 'restart', `wg-quick@${wireguard.interface_name}.service`],
+      ['systemctl', 'restart', this.systemdUnit],
       'restart the WireGuard systemd unit'
     )
   }
 
   private async writeConfig (contents: string): Promise<boolean> {
-    const outputPath = this.config.wireguard?.output.wgquick.path
-    if (!outputPath) {
-      throw new Error('WireGuard output path is missing')
-    }
-
-    const isChanged = await this.writeFile(outputPath, contents)
+    const isChanged = await this.writeFile(this.wgConfig.output.wgquick.path, contents)
     if (!isChanged) {
       this.logger.debug('on-disk configuration is up-to-date, skipping write')
     }
     return isChanged
   }
-}
-
-export function filterWireguardDirectory (
-  contents: WireguardDirectory,
-  localAddress: string,
-  ignoredOrgs: readonly string[] = []
-): WireguardDirectory {
-  const ignored = new Set(ignoredOrgs)
-  const normalizedLocalAddress = normalizeIpv6Address(localAddress)
-
-  const orgs = contents.orgs
-    .filter(org => !ignored.has(org.orgId))
-    .map(org => ({
-      ...org,
-      name: sanitizeWireguardComment(org.name),
-      peers: org.peers
-        .filter(peer => normalizeIpv6Address(peer.address) !== normalizedLocalAddress)
-        .toSorted((left, right) => left.address.localeCompare(right.address)),
-    }))
-    .filter(org => org.peers.length > 0)
-    .toSorted((left, right) => left.orgId.localeCompare(right.orgId))
-
-  return { orgs }
-}
-
-export async function quarantineUnresolvableWireguardEndpoints (
-  contents: WireguardDirectory,
-  resolver: HostnameResolver = resolveHostname
-): Promise<{ directory: WireguardDirectory, failures: EndpointFailure[] }> {
-  const resolutions = new Map<string, Promise<void>>()
-  const results = await Promise.all(contents.orgs.map(org => quarantineOrganization(org, resolver, resolutions)))
-
-  return {
-    directory: {
-      orgs: results
-        .map(result => result.org)
-        .filter(org => org.peers.length > 0),
-    },
-    failures: results.flatMap(result => result.failures),
-  }
-}
-
-function getErrorMessage (error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
-function normalizeIpv6Address (address: string): string {
-  const addressWithoutPrefix = address.split('/', 1)[0]
-  if (!addressWithoutPrefix) {
-    throw new Error(`Invalid IPv6 address "${address}"`)
-  }
-
-  const hostname = new URL(`http://[${addressWithoutPrefix}]`).hostname
-  return hostname.slice(1, -1)
-}
-
-function parseEndpointHostname (endpoint: string): string {
-  const bracketed = /^\[([^\]]+)]:(\d{1,5})$/.exec(endpoint)
-  const hostname = /^([^:]+):(\d{1,5})$/.exec(endpoint)
-  const match = bracketed ?? hostname
-  const host = match?.[1]
-  const port = Number(match?.[2])
-  if (!host || !Number.isSafeInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`Invalid WireGuard endpoint "${endpoint}"`)
-  }
-  return host
-}
-
-async function quarantineOrganization (
-  org: WireguardDirectory['orgs'][number],
-  resolver: HostnameResolver,
-  resolutions: Map<string, Promise<void>>
-): Promise<{ failures: EndpointFailure[], org: WireguardDirectory['orgs'][number] }> {
-  const failures: EndpointFailure[] = []
-  const peers = []
-
-  for (const peer of org.peers) {
-    if (!peer.endpoint) {
-      peers.push(peer)
-      continue
-    }
-
-    try {
-      const hostname = parseEndpointHostname(peer.endpoint)
-      if (isIP(hostname) === 0) {
-        let resolution = resolutions.get(hostname)
-        if (!resolution) {
-          resolution = resolver(hostname)
-          resolutions.set(hostname, resolution)
-        }
-        await resolution
-      }
-      peers.push(peer)
-    } catch (error) {
-      failures.push({
-        address: peer.address,
-        endpoint: peer.endpoint,
-        message: getErrorMessage(error),
-        orgId: org.orgId,
-      })
-    }
-  }
-
-  return { failures, org: { ...org, peers } }
-}
-
-function sanitizeWireguardComment (value: string): string {
-  return value
-    .replaceAll(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+/gu, ' ')
-    .replaceAll(/\s+/gu, ' ')
-    .trim() || 'Unknown organization'
 }

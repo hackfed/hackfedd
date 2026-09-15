@@ -6,6 +6,15 @@ import { Logger } from 'tslog'
 
 export const testLogger = new Logger({ type: 'hidden' })
 
+export async function getRejectedError (promise: Promise<unknown>): Promise<Error> {
+  try {
+    await promise
+  } catch (error) {
+    return error instanceof Error ? error : new Error(String(error))
+  }
+  throw new Error('Expected promise to reject')
+}
+
 export function getTestPort (): number {
   return randomInt(20_000, 60_000)
 }

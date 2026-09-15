@@ -28,16 +28,17 @@ type AtomicWriter = (targetPath: string, contents: string) => Promise<boolean>
 const MODULE_ORDER: readonly AsteriskModule[] = ['chan_iax2.so', 'pbx_config.so']
 const ASTERISK_CONFIG_DIRECTORY_MODE = 0o755
 const ASTERISK_CONFIG_MODE = 0o644
-const ARTIFACT_MODULES: Record<keyof AsteriskArtifacts, AsteriskModule> = {
-  'extensions-inbound.conf': 'pbx_config.so',
-  'extensions-outbound.conf': 'pbx_config.so',
-  'iax.conf': 'chan_iax2.so',
-}
+const ARTIFACTS: readonly { module: AsteriskModule; name: keyof AsteriskArtifacts, }[] = [
+  { module: 'pbx_config.so', name: 'extensions-inbound.conf' },
+  { module: 'pbx_config.so', name: 'extensions-outbound.conf' },
+  { module: 'chan_iax2.so', name: 'iax.conf' },
+]
 
 export class Asterisk {
   private readonly directory: Directory<TelephonyDirectory>
   private readonly logger: Logger<unknown>
   private readonly outputDirectory: string
+  // A failed AMI reload is retried even when the generated files are unchanged.
   private readonly pendingReloads = new Set<AsteriskModule>()
   private readonly reloader: AsteriskReloader | undefined
   private started = false
@@ -107,18 +108,16 @@ export class Asterisk {
       }
     }
 
-    for (const [name, contents] of Object.entries(artifacts) as [keyof AsteriskArtifacts, string][]) {
-      const targetPath = path.join(this.outputDirectory, name)
-      if (await this.writeFile(targetPath, contents)) {
-        this.logger.info('wrote generated Asterisk configuration', targetPath)
-        if (this.reloader) {
-          this.pendingReloads.add(ARTIFACT_MODULES[name])
-        }
-      } else {
-        this.logger.debug('generated Asterisk configuration is unchanged', targetPath)
-      }
-    }
+    await this.writeArtifacts(artifacts)
+    await this.reloadPendingModules(isStartup)
+  }
 
+  private readonly onDirectoryChanged: DirectoryEventHandler<TelephonyDirectory> = async ({ data }) => {
+    this.logger.info('telephony directory updated')
+    await this.apply(data, false)
+  }
+
+  private async reloadPendingModules (isStartup: boolean): Promise<void> {
     if (!this.reloader) {
       if (isStartup) {
         this.logger.warn('Asterisk reload is not configured; generated files must be reloaded by the operator')
@@ -137,8 +136,17 @@ export class Asterisk {
     }
   }
 
-  private readonly onDirectoryChanged: DirectoryEventHandler<TelephonyDirectory, 'changed'> = async ({ data }) => {
-    this.logger.info('telephony directory updated')
-    await this.apply(data, false)
+  private async writeArtifacts (artifacts: AsteriskArtifacts): Promise<void> {
+    for (const { module, name } of ARTIFACTS) {
+      const targetPath = path.join(this.outputDirectory, name)
+      if (await this.writeFile(targetPath, artifacts[name])) {
+        this.logger.info('wrote generated Asterisk configuration', targetPath)
+        if (this.reloader) {
+          this.pendingReloads.add(module)
+        }
+      } else {
+        this.logger.debug('generated Asterisk configuration is unchanged', targetPath)
+      }
+    }
   }
 }

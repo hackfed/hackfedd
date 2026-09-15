@@ -1,0 +1,15 @@
+<% it.peers.forEach(peer => { -%>
+; (<%= peer.orgId %>) <%= peer.displayName %>
+[<%= peer.peerName %>]
+type = friend
+username = <%= it.localPeerName %>
+host = <%= peer.host %>
+port = <%= peer.port %>
+context = <%= peer.context %>
+qualify = yes
+connectedline = yes
+bandwidth = high
+disallow = all
+allow = <%= peer.codecs.join(',') %>
+
+<% }) -%>

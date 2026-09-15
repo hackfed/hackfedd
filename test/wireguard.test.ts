@@ -11,7 +11,7 @@ import { Directory } from '@/lib/common/directory'
 import { ConfigSchema } from '@/lib/config/config.schema'
 import { filterWireguardDirectory, quarantineUnresolvableWireguardEndpoints, WireGuard } from '@/lib/wireguard'
 
-import { getTestPort, testLogger } from './helpers'
+import { getRejectedError, getTestPort, testLogger } from './helpers'
 
 const PUBLIC_KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
 const PRIVATE_KEY = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB='
@@ -125,13 +125,13 @@ describe('WireGuard', () => {
     }
     peer.endpoint = 'evn.dipier.ro:39242'
     let isResolvable = false
-    const fixture = await makeService(
-      'systemctl',
-      undefined,
-      undefined,
+    const fixture = await makeService({
       contents,
-      () => isResolvable ? Promise.resolve() : Promise.reject(new Error('DNS lookup failed'))
-    )
+      resolveHostname: () => isResolvable
+        ? Promise.resolve()
+        : Promise.reject(new Error('DNS lookup failed')),
+      strategy: 'systemctl',
+    })
 
     await fixture.service.start()
     expect(await Bun.file(fixture.outputPath).text()).not.toContain('evn.dipier.ro:39242')
@@ -145,12 +145,15 @@ describe('WireGuard', () => {
   })
 
   test('starts an inactive systemd unit when the configuration is unchanged', async () => {
-    const fixture = await makeService('systemctl', command => command[1] === 'is-active'
-      ? { exitCode: 3, stderr: '', stdout: 'inactive' }
-      : { exitCode: 0, stderr: '', stdout: 'ok' },
-    async (targetPath, contents) => {
-      await writeFileAtomic(targetPath, contents)
-      return false
+    const fixture = await makeService({
+      resultForCommand: command => command[1] === 'is-active'
+        ? { exitCode: 3, stderr: '', stdout: 'inactive' }
+        : { exitCode: 0, stderr: '', stdout: 'ok' },
+      strategy: 'systemctl',
+      writeFile: async (targetPath, contents) => {
+        await writeFileAtomic(targetPath, contents)
+        return false
+      },
     })
     await fixture.service.start()
     fixture.service.stop()
@@ -168,7 +171,7 @@ describe('WireGuard', () => {
   })
 
   test('does not restart an active systemd unit when the configuration is unchanged', async () => {
-    const fixture = await makeService('systemctl')
+    const fixture = await makeService({ strategy: 'systemctl' })
     await fixture.service.start()
     fixture.service.stop()
     await fixture.service.start()
@@ -184,9 +187,12 @@ describe('WireGuard', () => {
   })
 
   test('propagates systemctl restart failures', async () => {
-    const fixture = await makeService('systemctl', command => command[1] === 'restart'
-      ? { exitCode: 1, stderr: 'unit failed', stdout: '' }
-      : { exitCode: 0, stderr: '', stdout: 'unit contents' })
+    const fixture = await makeService({
+      resultForCommand: command => command[1] === 'restart'
+        ? { exitCode: 1, stderr: 'unit failed', stdout: '' }
+        : { exitCode: 0, stderr: '', stdout: 'unit contents' },
+      strategy: 'systemctl',
+    })
 
     const error = await getRejectedError(fixture.service.start())
     expect(error.message).toContain('unit failed')
@@ -194,35 +200,38 @@ describe('WireGuard', () => {
 
   test('propagates wg-quick up failures while tolerating an inactive down', async () => {
     process.env.HFD_SKIP_PREFLIGHT_CHECKS = '1'
-    const fixture = await makeService('cmd', command => command[1] === 'up'
-      ? { exitCode: 1, stderr: 'up failed', stdout: '' }
-      : { exitCode: 1, stderr: 'not active', stdout: '' })
+    const fixture = await makeService({
+      resultForCommand: command => command[1] === 'up'
+        ? { exitCode: 1, stderr: 'up failed', stdout: '' }
+        : { exitCode: 1, stderr: 'not active', stdout: '' },
+      strategy: 'cmd',
+    })
 
     const error = await getRejectedError(fixture.service.start())
     expect(error.message).toContain('up failed')
   })
 })
 
-async function getRejectedError (promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error))
-  }
-  throw new Error('Expected promise to reject')
+interface ServiceOptions {
+  contents?: WireguardDirectory
+  resolveHostname?: (hostname: string) => Promise<void>
+  resultForCommand?: (command: readonly string[]) => { exitCode: number, stderr: string, stdout: string }
+  strategy: 'cmd' | 'systemctl'
+  writeFile?: (targetPath: string, contents: string) => Promise<boolean>
 }
 
-async function makeService (
-  strategy: 'cmd' | 'systemctl',
-  resultForCommand: ((command: readonly string[]) => {
-    exitCode: number
-    stderr: string
-    stdout: string
-  }) | undefined = () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
-  writeFile?: (targetPath: string, contents: string) => Promise<boolean>,
-  contents: WireguardDirectory = wireguardDirectory,
-  resolveHostname?: (hostname: string) => Promise<void>
-): Promise<{ commands: string[][], directory: Directory<WireguardDirectory>, outputPath: string, service: WireGuard }> {
+async function makeService ({
+  contents = wireguardDirectory,
+  resolveHostname,
+  resultForCommand = () => ({ exitCode: 0, stderr: '', stdout: 'ok' }),
+  strategy,
+  writeFile,
+}: ServiceOptions): Promise<{
+  commands: string[][]
+  directory: Directory<WireguardDirectory>
+  outputPath: string
+  service: WireGuard
+}> {
   const server = Bun.serve({
     fetch: request => request.headers.get('if-none-match') === '"v1"'
       ? new Response(null, { status: 304 })

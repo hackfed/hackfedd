@@ -12,7 +12,7 @@ import { Asterisk } from '@/lib/asterisk'
 import { Directory } from '@/lib/common/directory'
 import { ConfigSchema } from '@/lib/config/config.schema'
 
-import { getTestPort, telephonyDirectory, testLogger } from './helpers'
+import { getRejectedError, getTestPort, telephonyDirectory, testLogger } from './helpers'
 
 const servers: Array<ReturnType<typeof Bun.serve>> = []
 const temporaryDirectories: string[] = []
@@ -161,13 +161,4 @@ function changedRemoteEndpoint (source: TelephonyDirectory): TelephonyDirectory 
   }
   exchange.endpoint = '[fd79:7636:1f08:883d::8]:4571'
   return result
-}
-
-async function getRejectedError (promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise
-  } catch (error) {
-    return error instanceof Error ? error : new Error(String(error))
-  }
-  throw new Error('Expected promise to reject')
 }

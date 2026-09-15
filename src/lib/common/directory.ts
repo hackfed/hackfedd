@@ -15,14 +15,9 @@ export interface DirectoryConfig<T> {
   schema: z.ZodType<T>
 }
 
-export type DirectoryEventHandler<T, K extends keyof DirectoryEvents<T>> =
-  (event: DirectoryEvents<T>[K]) => unknown
-
-export type DirectoryEvents<T> = {
-  changed: {
-    data: T
-  }
-}
+/** A handler returns false when it applied healthy data but needs this document retried. */
+// eslint-disable-next-line @typescript-eslint/no-invalid-void-type -- normal handlers may return nothing.
+export type DirectoryEventHandler<T> = (event: { data: T }) => boolean | Promise<boolean | void> | void
 
 export interface DirectoryMeta {
   lastEtag?: string | undefined
@@ -35,11 +30,12 @@ export interface DirectoryMeta {
 export class Directory<T> {
   private readonly apiClient: KyInstance
   private data: null | T = null
-  private readonly handlers = new Set<DirectoryEventHandler<T, 'changed'>>()
+  private readonly handlers = new Set<DirectoryEventHandler<T>>()
   private readonly logger: Logger<unknown>
   private meta: DirectoryMeta = {}
   private polling = false
   private timerId: ReturnType<typeof setTimeout> | undefined
+  // Concurrent callers share one fetch and one application of the document.
   private updatePromise: Promise<boolean> | undefined
 
   private get isExpired (): boolean {
@@ -73,14 +69,14 @@ export class Directory<T> {
 
   public off (
     _event: 'changed',
-    handler: DirectoryEventHandler<T, 'changed'>
+    handler: DirectoryEventHandler<T>
   ): void {
     this.handlers.delete(handler)
   }
 
   public on (
     _event: 'changed',
-    handler: DirectoryEventHandler<T, 'changed'>
+    handler: DirectoryEventHandler<T>
   ): void {
     this.handlers.add(handler)
   }
@@ -147,24 +143,22 @@ export class Directory<T> {
 
     const candidate = this.config.schema.parse(await response.json())
 
-    // Applying the candidate is part of acknowledging it. If a handler fails,
-    // preserve the previous ETag so the same document is fetched and retried.
-    let shouldAcknowledge = true
+    // An ETag is acknowledged only after every consumer applies the document.
+    // Returning false lets one consumer retry without blocking the others.
+    let didAllApply = true
     for (const handler of this.handlers) {
       if (await handler({ data: candidate }) === false) {
-        shouldAcknowledge = false
+        didAllApply = false
       }
     }
 
     this.data = candidate
-    this.meta = {
-      lastEtag: shouldAcknowledge
-        ? response.headers.get('etag') ?? undefined
-        : this.meta.lastEtag,
-      lastFetched: Date.now(),
+    this.meta.lastFetched = Date.now()
+    if (didAllApply) {
+      this.meta.lastEtag = response.headers.get('etag') ?? undefined
     }
 
-    if (shouldAcknowledge) {
+    if (didAllApply) {
       this.logger.debug('directory data updated. New etag:', this.meta.lastEtag)
     } else {
       this.logger.warn('directory data applied partially; leaving ETag pending for retry')
