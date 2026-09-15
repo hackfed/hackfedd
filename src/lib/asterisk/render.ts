@@ -187,6 +187,7 @@ port = ${peer.port}
 context = ${peer.context}
 qualify = yes
 connectedline = yes
+bandwidth = high
 disallow = all
 allow = ${peer.codecs.join(',')}
 `)

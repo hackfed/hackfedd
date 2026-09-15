@@ -50,6 +50,7 @@ describe('Asterisk rendering', () => {
     expect(artifacts['iax.conf']).toContain(`[${fabPeer}]\ntype = friend\nusername = ${localPeer}`)
     expect(artifacts['iax.conf']).toContain('host = fd79:7636:1f08:883d::8\nport = 4569')
     expect(artifacts['iax.conf']).toContain('connectedline = yes')
+    expect(artifacts['iax.conf']).toContain('bandwidth = high')
     expect(artifacts['iax.conf']).toContain('allow = g722,ulaw')
     expect(artifacts['iax.conf']).not.toContain('skip')
     expect(artifacts['extensions-outbound.conf']).toContain('[hackfed-outbound]')
