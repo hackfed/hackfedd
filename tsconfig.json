@@ -3,8 +3,8 @@
   "_version": "2.0.0",
   "extends": "@bksp/style-guide/typescript",
   "compilerOptions": {
-    "lib": ["es2022"],
-		"target": "es2022",
+    "lib": ["es2023"],
+		"target": "es2023",
 		"moduleDetection": "force",
 		"module": "preserve",
 		"resolveJsonModule": true,
@@ -17,6 +17,7 @@
   },
   "include": [
     "src/**/*.ts",
+    "test/**/*.ts",
     "tools/**/*.ts"
   ]
 }

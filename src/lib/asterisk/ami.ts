@@ -1,101 +1,151 @@
+import type { Logger } from 'tslog'
+
 import { JSDOM } from 'jsdom'
-import ky from 'ky'
 import { parse as parseSetCookie } from 'set-cookie-parser'
 
-import type { AmiResponse } from './interface'
+import type { AsteriskConfigAmiHttpReload } from './config.schema'
+import type { AsteriskModule } from './render'
 
-const api = ky.create({
-  prefix: 'http://ninetails:8088/manager',
-})
-
-/**
- * Retrieves an authenticated session cookie.
- * @returns Session cookie string.
- */
-export async function getAuthenticatedSessionCookie (): Promise<string> {
-  const authPayload = new URLSearchParams()
-  authPayload.set('action', 'login')
-  authPayload.set('username', 'hackfedd')
-  authPayload.set('secret', 'your_generated_password_here')
-
-  const { response } = await makeAmiRequest(authPayload)
-  const authCookies = parseSetCookie(response.headers.getAll('set-cookie'))
-  const session = authCookies.find(cookie => cookie.name === 'mansession_id')?.value
-  if (!session) {
-    throw new Error('Failed to retrieve session cookie from Asterisk AMI')
-  }
-
-  return `mansession_id=${session}`
+export interface AmiResponse {
+  fields: Map<string, string>
+  response: Response
 }
 
-/**
- * Makes a POST request to AMI via the HTTP interface.
- * @param data Data to send in the request body.
- * @param options Additional request options.
- * @returns Response from the AMI.
- */
-export async function makeAmiRequest<T = unknown> (
-  data: URLSearchParams,
-  options: RequestInit = {}
-): Promise<AmiResponse<T>> {
-  const response = await api.post<T>('.', {
-    ...options,
-    body: data.toString(),
-    headers: {
-      ...options.headers,
+export interface AsteriskReloader {
+  reload: (modules: readonly AsteriskModule[]) => Promise<void>
+}
+
+type Fetch = typeof globalThis.fetch
+
+/** AMI-over-HTTP client for both Asterisk /manager and /rawman endpoints. */
+export class AmiHttpClient implements AsteriskReloader {
+  private readonly logger: Logger<unknown>
+
+  constructor (
+    parentLogger: Logger<unknown>,
+    private readonly config: AsteriskConfigAmiHttpReload['ami'],
+    private readonly fetchImplementation: Fetch = fetch
+  ) {
+    this.logger = parentLogger.getSubLogger({ name: 'AMI' })
+  }
+
+  public async reload (modules: readonly AsteriskModule[]): Promise<void> {
+    if (modules.length === 0) {
+      return
+    }
+
+    const sessionCookie = await this.login()
+    let failure: unknown
+
+    try {
+      for (const module of modules) {
+        await this.request({
+          Action: 'Reload',
+          Module: module,
+        }, sessionCookie)
+        this.logger.info('reloaded Asterisk module', module)
+      }
+    } catch (error) {
+      failure = error
+    } finally {
+      try {
+        await this.request({ Action: 'Logoff' }, sessionCookie)
+      } catch (error) {
+        if (failure) {
+          this.logger.warn('failed to log off AMI session after another AMI failure', error)
+        } else {
+          failure = error
+        }
+      }
+    }
+
+    if (failure) {
+      if (failure instanceof Error) {
+        throw failure
+      }
+      throw new Error('AMI reload failed', { cause: failure })
+    }
+  }
+
+  private async login (): Promise<string> {
+    const { response } = await this.request({
+      Action: 'Login',
+      Secret: this.config.secret,
+      Username: this.config.username,
+    })
+
+    const cookieHeader = response.headers.get('set-cookie') ?? ''
+    const session = parseSetCookie(cookieHeader)
+      .find(cookie => cookie.name === 'mansession_id')
+
+    if (!session?.value) {
+      throw new Error('AMI login succeeded but no mansession_id cookie was returned')
+    }
+
+    return `mansession_id=${session.value}`
+  }
+
+  private async request (
+    fields: Record<string, string>,
+    sessionCookie?: string
+  ): Promise<AmiResponse> {
+    const body = new URLSearchParams(fields)
+
+    const headers: Record<string, string> = {
       'Content-Type': 'application/x-www-form-urlencoded',
     }
-  })
+    if (sessionCookie) {
+      headers.Cookie = sessionCookie
+    }
 
-  const { window } = new JSDOM(await response.text())
-  const rows = window.document.querySelector('tbody')?.childNodes
-  if (!rows) {
-    throw new Error('AMI response parsing failed: No table body found')
-  }
+    const response = await this.fetchImplementation(this.config.uri, {
+      body,
+      headers,
+      method: 'POST',
+    })
+    if (!response.ok) {
+      throw new Error(`AMI HTTP request failed with status ${response.status}`)
+    }
 
-  const result = new Map(
-    [...rows]
-      .filter(node => node.nodeName === 'TR')
-      .map(row => {
-        const [name, value] = [...row.childNodes].map(cell => cell.textContent)
-        if (!name || !value) {
-          return null
-        }
-        return [name, value]
-      })
-      .filter((row): row is [string, string] => row !== null)
-  )
+    const parsed = parseAmiResponse(await response.text())
+    if (parsed.get('Response') !== 'Success' && parsed.get('Response') !== 'Goodbye') {
+      const message = parsed.get('Message') ?? 'response did not contain a success status'
+      throw new Error(`AMI ${fields.Action ?? 'request'} failed: ${message}`)
+    }
 
-  if (result.get('Response') !== 'Success') {
-    throw new Error(`AMI request returned non-success response: ${result.get('Message') ?? [...result.values()]}`)
-  }
-
-  return {
-    amiResponseTable: result,
-    document: window.document,
-    response,
+    return { fields: parsed, response }
   }
 }
 
-/**
- * Reloads the IAX2 and dialplan configuration via AMI.
- */
-export async function reload (): Promise<void> {
-  const sessionCookie = await getAuthenticatedSessionCookie()
-  const options: RequestInit = {
-    headers: {
-      Cookie: sessionCookie,
+export function parseAmiResponse (body: string): Map<string, string> {
+  const parsed = new Map<string, string>()
+
+  if (/<(?:html|table|tr|td)\b/i.test(body)) {
+    const { document } = new JSDOM(body).window
+    for (const row of document.querySelectorAll('tr')) {
+      const cells = row.querySelectorAll('th, td')
+      if (cells.length < 2) {
+        continue
+      }
+
+      const name = cells.item(0).textContent.trim()
+      const value = cells.item(1).textContent.trim()
+      if (name && value) {
+        parsed.set(name.replace(/:$/, ''), value)
+      }
+    }
+  } else {
+    for (const line of body.split(/\r?\n/)) {
+      const separator = line.indexOf(':')
+      if (separator > 0) {
+        parsed.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim())
+      }
     }
   }
 
-  const iaxReloadPayload = new URLSearchParams()
-  iaxReloadPayload.set('action', 'command')
-  iaxReloadPayload.set('command', 'iax2 reload')
+  if (parsed.size === 0) {
+    throw new Error('AMI response parsing failed: no response fields found')
+  }
 
-  const dialplanReloadPayload = new URLSearchParams()
-  dialplanReloadPayload.set('action', 'command')
-  dialplanReloadPayload.set('command', 'dialplan reload')
-
-  await makeAmiRequest(iaxReloadPayload, options)
-  await makeAmiRequest(dialplanReloadPayload, options)
+  return parsed
 }

@@ -16,7 +16,7 @@ export const WgQuickOutputConfigSchema = z
         description: 'Life-cycle management strategy for WireGuard configuration after rendering the template.',
         title: 'wg-quick Lifecycle Strategy',
       }),
-  }).meta({
+  }).strict().meta({
     description: 'Configuration options for wg-quick WireGuard output integration.',
     title: 'wg-quick Configuration',
   })
@@ -31,7 +31,7 @@ export const ConfigWireguardOutputSchema = z.object({
       title: 'WireGuard Output Type',
     }),
   wgquick: WgQuickOutputConfigSchema,
-}).meta({
+}).strict().meta({
   description: 'Output configuration for WireGuard service.',
   title: 'WireGuard Output Strategy',
 })
@@ -65,7 +65,7 @@ export const ConfigWireguardSchema = z
         description: 'Path to a custom Eta template for the WireGuard configuration file. Uses a default template if not present.',
         title: 'WireGuard Template Path',
       }),
-  }).meta({
+  }).strict().meta({
     description: 'Configuration for the WireGuard interface.',
     title: 'WireGuard Configuration',
   })

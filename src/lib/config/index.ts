@@ -4,7 +4,7 @@ import { YAML } from 'bun'
 import path from 'node:path'
 
 import { type Config, ConfigSchema } from './config.schema'
-export class Configuration {
+export class ConfigLoader {
   private configPath: string
   private logger: Logger<unknown>
 

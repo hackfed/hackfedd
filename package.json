@@ -43,6 +43,7 @@
   },
   "scripts": {
     "lint": "tsc --noEmit && eslint .",
+    "test": "bun test",
     "generate:config": "bun run tools/generate-config-schema.ts",
     "start": "bun run src/index.ts"
   },

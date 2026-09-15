@@ -22,9 +22,9 @@ general:
 # Optional. Disabled if not present.
 wireguard:
   # Name of the WireGuard interface to be created.
-  # Optional. Default to "hackfed0".
+  # Optional. Defaults to "hackfed0".
   interface_name: hackfed0
-  
+
   # Port on which the WireGuard interface will listen for incoming connections.
   # Optional. Disables listening if not present.
   listen_port: 31337
@@ -35,7 +35,7 @@ wireguard:
 
   # Way to provide a custom Eta template for the WireGuard configuration file.
   # Optional. If not present, a default template will be used.
-  template_path: /data/wireguard/hackfed0.conf.template
+  # template_path: /data/wireguard/hackfed0.conf.template
 
   # IPv6 address of this node inside the tunnel.
   # Required.
@@ -56,10 +56,12 @@ wireguard:
       # Optional. Defaults to "/etc/wireguard/hackfed0.conf".
       path: /data/wireguard/hackfed0.conf
 
-      # Reload strategy for WireGuard configuration after rendering the template.
-      #  - "cmd": run a command (wg-quick strip + wg syncconf) to reload WireGuard configuration.
+      # Lifecycle strategy for applying the rendered WireGuard configuration.
+      #  - "cmd": use wg-quick down/up at startup and wg-quick strip + wg syncconf for updates.
+      #  - "systemctl": restart wg-quick@<interface_name>.service at startup and after updates;
+      #    wg-quick systemd units do not provide a reload operation.
       # Optional. Default to "cmd".
-      reload: cmd
+      strategy: cmd
 
 # Telephony service configuration.
 # Optional, disabled if not present.
@@ -81,6 +83,7 @@ telephony:
     asterisk:
       # Directory to which hackfedd will render configuration templates.
       # Optional. Defaults to "/data/asterisk-configs".
+      # for freepbx, use /etc/asterisk/hackfed
       directory: /data/asterisk-configs
 
       # Way to reload Asterisk configuration after rendering templates.
@@ -94,15 +97,13 @@ telephony:
         # Required if type is "ami+http".
         ami:
           # URL to AMI over built-in web server
-          # Optional, default to "http://asterisk:8088/manager"
+          # Optional, defaults to "http://asterisk:8088/manager".
+          # /rawman is also supported.
           uri: http://asterisk:8088/manager
 
-          # AMI username
-          # Optional, default to "admin"
-          username: admin
+          # AMI username.
+          # Optional, defaults to "hackfedd".
+          username: hackfedd
 
-          # AMI password
-          # Optional, default to "password"
-          secret: password
-
-    
+          # AMI secret. Required; use a strong, unique value.
+          secret: replace-with-a-strong-generated-secret

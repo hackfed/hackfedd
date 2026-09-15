@@ -23,7 +23,6 @@ export const ConfigGeneralSchema = z
     ignored_orgs: z
       .array(z.string().min(1))
       .default([])
-      .optional()
       .meta({
         description: 'List of organization IDs to avoid peering with.',
         name: 'Ignored Organizations',
@@ -35,7 +34,7 @@ export const ConfigGeneralSchema = z
         description: 'ID of the organization associated with this instance.',
         title: 'Organization ID',
       }),
-  }).meta({
+  }).strict().meta({
     description: 'Common configuration options.',
     title: 'General Configuration',
   })
@@ -46,7 +45,7 @@ export const ConfigSchema = z
     general: ConfigGeneralSchema,
     telephony: ConfigTelephonySchema.optional(),
     wireguard: ConfigWireguardSchema.optional(),
-  }).meta({
+  }).strict().meta({
     description: 'Configuration schema for Hackfed Daemon (hackfedd).',
     id: 'Configuration',
     title: 'HackFed Configuration',
